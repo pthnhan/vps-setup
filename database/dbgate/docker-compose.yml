@@ -1,0 +1,34 @@
+services:
+  dbgate:
+    image: dbgate/dbgate:alpine
+    container_name: ${DBGATE_CONTAINER_NAME:-dbgate}
+    restart: unless-stopped
+    environment:
+      LOGIN: ${DBGATE_LOGIN:?set DBGATE_LOGIN in .env}
+      PASSWORD: ${DBGATE_PASSWORD:?set DBGATE_PASSWORD in .env}
+      BASIC_AUTH: ${DBGATE_BASIC_AUTH:-false}
+      CONNECTIONS: ${DBGATE_CONNECTIONS:-crypto_postgres,crypto_mongo}
+      LABEL_crypto_postgres: ${DBGATE_POSTGRES_LABEL:-Crypto PostgreSQL}
+      URL_crypto_postgres: ${DBGATE_POSTGRES_URL:?set DBGATE_POSTGRES_URL in .env}
+      ENGINE_crypto_postgres: postgres@dbgate-plugin-postgres
+      LABEL_crypto_mongo: ${DBGATE_MONGO_LABEL:-Crypto MongoDB}
+      URL_crypto_mongo: ${DBGATE_MONGO_URL:?set DBGATE_MONGO_URL in .env}
+      ENGINE_crypto_mongo: mongo@dbgate-plugin-mongo
+      TZ: ${TZ:-UTC}
+    ports:
+      - "${DBGATE_BIND_IP:-127.0.0.1}:${DBGATE_PORT:-3000}:3000"
+    volumes:
+      - dbgate_data:/root/.dbgate
+    networks:
+      database_network:
+        aliases:
+          - ${DBGATE_NETWORK_ALIAS:-dbgate}
+
+volumes:
+  dbgate_data:
+    name: ${DBGATE_VOLUME_NAME:-dbgate_data}
+
+networks:
+  database_network:
+    external: true
+    name: ${DATABASE_NETWORK_NAME:-database_network}

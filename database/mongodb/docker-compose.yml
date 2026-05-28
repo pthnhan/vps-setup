@@ -1,0 +1,35 @@
+services:
+  mongodb:
+    image: mongo:4.4
+    container_name: ${MONGO_CONTAINER_NAME:-mongodb}
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME:?set MONGO_INITDB_ROOT_USERNAME in .env}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD:?set MONGO_INITDB_ROOT_PASSWORD in .env}
+      TZ: ${TZ:-UTC}
+    ports:
+      - "${MONGO_BIND_IP:-127.0.0.1}:${MONGO_PORT:-27017}:27017"
+    volumes:
+      - mongodb_data:/data/db
+      - mongodb_config:/data/configdb
+    networks:
+      database_network:
+        aliases:
+          - ${MONGO_NETWORK_ALIAS:-mongodb}
+    healthcheck:
+      test: ["CMD-SHELL", "mongo --quiet --username \"$${MONGO_INITDB_ROOT_USERNAME}\" --password \"$${MONGO_INITDB_ROOT_PASSWORD}\" --authenticationDatabase admin --eval 'db.adminCommand({ ping: 1 }).ok'"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+volumes:
+  mongodb_data:
+    name: ${MONGO_DATA_VOLUME_NAME:-mongodb_data}
+  mongodb_config:
+    name: ${MONGO_CONFIG_VOLUME_NAME:-mongodb_config}
+
+networks:
+  database_network:
+    external: true
+    name: ${DATABASE_NETWORK_NAME:-database_network}
