@@ -11,7 +11,7 @@ Run these commands from the repository root.
 Start PostgreSQL first, then start pgAdmin:
 
 ```bash
-cd /home/pthnhan/workspace/vps-setup
+cd /path/to/vps-setup
 export VPS_SETUP_SECRETS="$HOME/.config/vps-setup"
 export PGADMIN_ENV_FILE="$VPS_SETUP_SECRETS/database/pgadmin.env"
 mkdir -p "$VPS_SETUP_SECRETS/database"
@@ -34,7 +34,7 @@ By default, pgAdmin listens on `127.0.0.1:5050` on the VPS. This avoids exposing
 Use an SSH tunnel:
 
 ```bash
-ssh -L 5050:127.0.0.1:5050 deploy@YOUR_VPS_IP
+ssh -L 5050:127.0.0.1:5050 -p SSH_PORT deploy@YOUR_VPS_IP
 ```
 
 Then open:

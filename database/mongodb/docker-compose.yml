@@ -1,6 +1,6 @@
 services:
   mongodb:
-    image: mongo:4.4
+    image: mongo:8.0
     container_name: ${MONGO_CONTAINER_NAME:-mongodb}
     restart: unless-stopped
     environment:
@@ -17,7 +17,7 @@ services:
         aliases:
           - ${MONGO_NETWORK_ALIAS:-mongodb}
     healthcheck:
-      test: ["CMD-SHELL", "mongo --quiet --username \"$${MONGO_INITDB_ROOT_USERNAME}\" --password \"$${MONGO_INITDB_ROOT_PASSWORD}\" --authenticationDatabase admin --eval 'db.adminCommand({ ping: 1 }).ok'"]
+      test: ["CMD-SHELL", "mongosh --quiet --username \"$${MONGO_INITDB_ROOT_USERNAME}\" --password \"$${MONGO_INITDB_ROOT_PASSWORD}\" --authenticationDatabase admin --eval 'db.adminCommand({ ping: 1 }).ok'"]
       interval: 10s
       timeout: 5s
       retries: 5

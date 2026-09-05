@@ -1,48 +1,205 @@
 # VPS Setup Toolkit
 
-This repository is a practical checklist and collection of small install modules for a new VPS. The goal is simple: prepare a server once, then install only the tools each project needs.
-
-The first tool category is `database/`, with separate Docker Compose examples for PostgreSQL, MongoDB, and optional database web UIs.
+A practical, security-first toolkit for preparing a new Ubuntu VPS and running reusable services with Docker Compose.
 
 ## Repository Layout
 
 ```text
+security/
+  README.md
+  sshd-hardening.conf.example
+  fail2ban-sshd.local.example
 database/
   README.md
   postgresql/
-    docker-compose.yml
-    .env.example
-    README.md
   mongodb/
-    docker-compose.yml
-    .env.example
-    README.md
   dbgate/
-    docker-compose.yml
-    .env.example
-    README.md
   pgadmin/
-    docker-compose.yml
-    .env.example
-    README.md
   mongo-express/
-    docker-compose.yml
-    .env.example
-    README.md
 ```
 
-Each installable tool should live in its own folder. Keep real environment files outside this repository, then start each tool with Docker Compose's `--env-file` option.
+Keep real credentials outside this repository, under `$HOME/.config/vps-setup/`. Only `.env.example` templates belong here.
 
+## Before You Start
 
-## Environment File Policy
+- Use a current Ubuntu LTS image.
+- Add your SSH public key through the VPS provider when possible.
+- Keep the provider's web/serial console available until SSH hardening is verified.
+- Take a provider snapshot before changing networking or SSH on an existing server.
+- Replace every uppercase placeholder in the commands below.
 
-Keep only templates in this repository:
+## New VPS Checklist
 
-```text
-database/*/.env.example
+Run the steps in order. Keep the original root SSH session open until a second session can log in with the new user, new SSH port, and SSH key.
+
+### 1. Update The System
+
+```bash
+ssh root@YOUR_VPS_IP
+apt update
+apt upgrade -y
+apt install -y ca-certificates curl git gnupg htop unzip ufw fail2ban unattended-upgrades zsh build-essential
 ```
 
-Keep real service environment files outside the repository. Create only the files for services you actually run:
+Reboot if required, then reconnect:
+
+```bash
+test -f /var/run/reboot-required && cat /var/run/reboot-required
+```
+
+### 2. Create An Administrative User
+
+```bash
+adduser deploy
+usermod -aG sudo deploy
+install -d -m 700 -o deploy -g deploy /home/deploy/.ssh
+if [ -f /root/.ssh/authorized_keys ]; then
+  install -m 600 -o deploy -g deploy /root/.ssh/authorized_keys /home/deploy/.ssh/authorized_keys
+fi
+```
+
+Open a second terminal and verify the key before continuing:
+
+```bash
+ssh deploy@YOUR_VPS_IP
+sudo -v
+```
+
+If `/root/.ssh/authorized_keys` does not exist, add your public key directly to `/home/deploy/.ssh/authorized_keys` from the provider console.
+
+### 3. Change The SSH Port And Configure The Firewall
+
+Changing the port reduces automated log noise, but it is not a substitute for key authentication or a firewall. The safe order is:
+
+1. Allow the new port in the provider firewall/security group.
+2. Allow the new port in UFW while port 22 is still available.
+3. Change and validate SSH configuration.
+4. Test a new login on the new port.
+5. Only then remove port 22.
+
+The full copy-and-verify procedure is in [security/README.md](security/README.md). Example with TCP port `2222`:
+
+```bash
+sudo ufw default deny incoming
+sudo ufw default allow outgoing
+sudo ufw limit 2222/tcp comment 'SSH'
+sudo ufw allow 22/tcp comment 'temporary SSH fallback'
+sudo ufw logging low
+sudo ufw enable
+```
+
+Install the SSH drop-in and replace the example port or user first:
+
+```bash
+sudo install -m 600 security/sshd-hardening.conf.example /etc/ssh/sshd_config.d/00-hardening.conf
+sudo nano /etc/ssh/sshd_config.d/00-hardening.conf
+sudo sshd -t
+sudo systemctl restart ssh.service
+```
+
+Test from a new terminal:
+
+```bash
+ssh -p 2222 deploy@YOUR_VPS_IP
+```
+
+After that succeeds, remove the fallback rule:
+
+```bash
+sudo ufw delete allow 22/tcp
+sudo ufw status numbered
+```
+
+Never close the working SSH session before the new login succeeds.
+
+### 4. Enable Brute-Force Protection And Security Updates
+
+Install the Fail2ban example, ensure its port matches SSH, then verify the jail:
+
+```bash
+sudo install -m 644 security/fail2ban-sshd.local.example /etc/fail2ban/jail.d/sshd.local
+sudo nano /etc/fail2ban/jail.d/sshd.local
+sudo fail2ban-client -t
+sudo systemctl enable --now fail2ban
+sudo fail2ban-client status sshd
+```
+
+Enable automatic security updates and check their timers:
+
+```bash
+sudo dpkg-reconfigure unattended-upgrades
+systemctl list-timers 'apt-daily*'
+```
+
+### 5. Set Timezone And Add Swap
+
+UTC makes server logs and incident timelines easier to correlate:
+
+```bash
+sudo timedatectl set-timezone UTC
+timedatectl status
+```
+
+For a small VPS without swap, create a 2 GiB swap file once:
+
+```bash
+swapon --show
+sudo fallocate -l 2G /swapfile
+sudo chmod 600 /swapfile
+sudo mkswap /swapfile
+sudo swapon /swapfile
+echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+sudo swapon --show
+```
+
+Skip creation if `swapon --show` already lists suitable swap. Do not append `/etc/fstab` twice.
+
+### 6. Install Docker Engine And Compose
+
+Use Docker's official Ubuntu repository for a production host; its package names are `docker-ce`, `docker-ce-cli`, `containerd.io`, `docker-buildx-plugin`, and `docker-compose-plugin`. Follow the current [official Ubuntu installation instructions](https://docs.docker.com/engine/install/ubuntu/) rather than a convenience script.
+
+Add the deployment user only if it should have root-equivalent Docker control:
+
+```bash
+sudo usermod -aG docker deploy
+```
+
+Log out and back in, then verify:
+
+```bash
+docker version
+docker compose version
+docker run --rm hello-world
+```
+
+Docker-published ports can bypass UFW. Keep internal services bound to `127.0.0.1` or unpublish their ports; do not rely on a UFW deny rule to protect a port published on `0.0.0.0`.
+
+### 7. Final Verification
+
+```bash
+sudo sshd -t
+sudo sshd -T | grep -E '^(port|permitrootlogin|passwordauthentication|kbdinteractiveauthentication|pubkeyauthentication) '
+sudo ufw status verbose
+sudo fail2ban-client status sshd
+ss -lntup
+systemctl --failed
+```
+
+Also verify the provider firewall exposes only the ports you intend to use. Normally that is the custom SSH port plus `80/tcp` and `443/tcp` when a public web server is installed.
+
+### 8. Optional Interactive Shell
+
+For a VPS used interactively, change the deployment user's shell only after the core setup is complete:
+
+```bash
+sudo chsh -s "$(command -v zsh)" deploy
+```
+
+Shell frameworks and plugins are optional. Review remote install scripts before running them, keep configuration per user, and avoid adding language-runtime paths that are not actually installed.
+
+## Using Service Modules
+
+Create only the private env files for services you run:
 
 ```text
 $HOME/.config/vps-setup/database/postgresql.env
@@ -52,184 +209,9 @@ $HOME/.config/vps-setup/database/pgadmin.env
 $HOME/.config/vps-setup/database/mongo-express.env
 ```
 
-Application environment files belong to the application repository or its secret manager. For example, `<your_new_project>/.env` may contain that app project user credentials for PostgreSQL and MongoDB. It should not contain the VPS service admin passwords or DBGate UI password.
-
-If a real `.env` file is accidentally created inside this repository, move it to the private directory or delete it after confirming the private copy exists:
-
-```bash
-find database -maxdepth 2 -name .env -print
-```
-
-## New VPS Setup Checklist
-
-These commands assume an Ubuntu or Debian-based VPS. Adjust package names if your server uses another distribution.
-
-### 1. Log In And Update Packages
-
-```bash
-ssh root@YOUR_VPS_IP
-
-apt update
-apt upgrade -y
-apt install -y curl git unzip htop ufw fail2ban ca-certificates gnupg zsh build-essential
-```
-
-`build-essential` installs `gcc`, `g++`, `make`, and common build dependencies. Prefer it over installing compiler packages one by one.
-
-### 2. Create A Non-Root User
-
-```bash
-adduser deploy
-usermod -aG sudo deploy
-```
-
-Copy your SSH public key to the new user before disabling password login:
-
-```bash
-rsync --archive --chown=deploy:deploy ~/.ssh /home/deploy
-```
-
-Then reconnect as the new user:
-
-```bash
-ssh deploy@YOUR_VPS_IP
-```
-
-### 3. Harden SSH
-
-Make sure SSH key login works before changing SSH settings.
-
-```bash
-sudo nano /etc/ssh/sshd_config.d/99-hardening.conf
-```
-
-Recommended settings:
-
-```text
-PermitRootLogin no
-PasswordAuthentication no
-PubkeyAuthentication yes
-```
-
-Reload SSH:
-
-```bash
-sudo systemctl reload ssh
-```
-
-Keep your current SSH session open while testing a new login window.
-
-### 4. Configure Firewall
-
-```bash
-sudo ufw allow OpenSSH
-sudo ufw enable
-sudo ufw status
-```
-
-Only open service ports when a project really needs public access. For databases, prefer private access through localhost, a VPN, or a shared Docker network.
-
-### 5. Set Timezone And Swap
-
-```bash
-sudo timedatectl set-timezone UTC
-```
-
-For small VPS instances, add swap:
-
-```bash
-sudo fallocate -l 2G /swapfile
-sudo chmod 600 /swapfile
-sudo mkswap /swapfile
-sudo swapon /swapfile
-echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
-```
-
-### 6. Install Docker And Compose
-
-Quick setup with distribution packages:
-
-```bash
-sudo apt update
-sudo apt install -y docker.io docker-compose-plugin
-sudo usermod -aG docker "$USER"
-```
-
-Log out and back in, then verify:
-
-```bash
-docker --version
-docker compose version
-```
-
-For production servers that need the newest Docker release, use Docker's official installation instructions for your distribution.
-
-### 7. Optional Developer Tooling And Shell
-
-Use this section when the VPS will also be used for interactive development or project maintenance.
-
-| Category | Tools or settings | Notes |
-| --- | --- | --- |
-| Core CLI packages | `curl`, `git`, `zsh` | Useful on most servers and installed in step 1. |
-| Build tools | `build-essential` | Includes `gcc`, `g++`, `make`, and common build headers. |
-| GUI terminal | `terminator` | Install only on a VPS with a desktop environment or X11 forwarding. |
-| Shell framework | Oh My Zsh | Per-user shell customization for `zsh`. |
-| Shell plugin | `zsh-autosuggestions` | Adds command suggestions based on shell history. |
-| User shell config | `PATH`, `ZSH_THEME`, `plugins` | Stored in the user's `~/.zshrc`. |
-
-If you skipped the packages in step 1, install them now:
-
-```bash
-sudo apt update
-sudo apt install -y curl git zsh build-essential
-```
-
-`sudo apt-get install gcc gcc+` is not valid on Ubuntu or Debian because `gcc+` is not a package name. Use `build-essential`, or install `gcc g++` directly if you only need the compilers.
-
-Install `terminator` only when the VPS has a graphical desktop session:
-
-```bash
-sudo apt install -y terminator
-```
-
-Run the shell setup as the non-root user that will use `zsh`:
-
-```bash
-sudo chsh -s "$(command -v zsh)" "$USER"
-RUNZSH=no CHSH=no sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)"
-git clone https://github.com/zsh-users/zsh-autosuggestions "${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}/plugins/zsh-autosuggestions"
-```
-
-Then update `~/.zshrc`:
-
-```zsh
-export PATH="$HOME/miniconda3/bin:$PATH"
-ZSH_THEME="gnzh"
-plugins=(git zsh-autosuggestions)
-```
-
-The `PATH` line is only needed if Miniconda is installed at `$HOME/miniconda3`. Replace the default `plugins=(git)` line instead of adding a second `plugins` line.
-
-Apply the settings:
-
-```bash
-source ~/.zshrc
-```
-
-Log out and reconnect to confirm the default shell changed.
-
-## Using This Repository
-
-1. Choose the tool you want to install.
-2. Copy that tool's `.env.example` to a private path outside this repository.
-3. Edit passwords, ports, names, and bind addresses in the private env file.
-4. Enter the tool folder.
-5. Start the service with `docker compose --env-file`.
-
 Example:
 
 ```bash
-cd /home/pthnhan/workspace/vps-setup
 export VPS_SETUP_SECRETS="$HOME/.config/vps-setup"
 mkdir -p "$VPS_SETUP_SECRETS/database"
 cp database/postgresql/.env.example "$VPS_SETUP_SECRETS/database/postgresql.env"
@@ -238,36 +220,16 @@ nano "$VPS_SETUP_SECRETS/database/postgresql.env"
 
 cd database/postgresql
 docker network inspect database_network >/dev/null 2>&1 || docker network create database_network
+docker compose --env-file "$VPS_SETUP_SECRETS/database/postgresql.env" config --quiet
 docker compose --env-file "$VPS_SETUP_SECRETS/database/postgresql.env" up -d
 docker compose --env-file "$VPS_SETUP_SECRETS/database/postgresql.env" ps
 ```
 
-## Databases
-
-Read [database/README.md](database/README.md) before starting a database service.
-
-The important model is:
-
-- Install PostgreSQL, MongoDB, or another database service once on the VPS.
-- For every new project, create a separate database, user, password, and connection string.
-- Store each project's connection string in that project's own environment file or secret manager.
-
-Current database service modules:
-
-- [PostgreSQL](database/postgresql/README.md)
-- [MongoDB](database/mongodb/README.md)
-
-Current database UI modules:
-
-- [DbGate](database/dbgate/README.md): recommended general-purpose UI for PostgreSQL and MongoDB.
-- [pgAdmin](database/pgadmin/README.md): PostgreSQL-focused administration UI.
-- [mongo-express](database/mongo-express/README.md): MongoDB-only UI for private development or short-lived maintenance.
-
-For direct PostgreSQL access from a local machine, read the public access section in [database/postgresql/README.md](database/postgresql/README.md). The short version is: set `POSTGRES_BIND_IP=0.0.0.0` in the private PostgreSQL env file, restart the PostgreSQL Compose service with `--env-file`, open TCP port `5432` in the VPS firewall and provider firewall, then connect to `VPS_PUBLIC_IP:5432` with the project database user.
+Read [database/README.md](database/README.md) before installing a database. Install a database service once, then give each application its own database, user, password, and connection string.
 
 ## Common Operations
 
-Inside any service folder:
+Inside a service folder:
 
 ```bash
 export SERVICE_ENV_FILE="$HOME/.config/vps-setup/database/postgresql.env"
@@ -277,4 +239,4 @@ docker compose --env-file "$SERVICE_ENV_FILE" restart
 docker compose --env-file "$SERVICE_ENV_FILE" down
 ```
 
-`docker compose down` stops containers but keeps named volumes by default. Do not remove volumes unless you intentionally want to delete persistent data.
+`docker compose down` keeps named volumes unless `--volumes` is supplied. Back up important data off the VPS before upgrades.

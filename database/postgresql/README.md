@@ -7,7 +7,7 @@ This module runs one PostgreSQL service for the VPS. Install it once, then creat
 Run these commands from the repository root.
 
 ```bash
-cd /home/pthnhan/workspace/vps-setup
+cd /path/to/vps-setup
 export VPS_SETUP_SECRETS="$HOME/.config/vps-setup"
 export POSTGRES_ENV_FILE="$VPS_SETUP_SECRETS/database/postgresql.env"
 mkdir -p "$VPS_SETUP_SECRETS/database"
@@ -25,75 +25,34 @@ Change `POSTGRES_PASSWORD` before starting the service.
 
 By default, PostgreSQL listens on `127.0.0.1:5432` on the VPS. This is safer than exposing it publicly.
 
-## Public Access From Your Local Machine
+## Access From Your Local Machine
 
-Use this only when external machines must connect directly to PostgreSQL. Setting `POSTGRES_BIND_IP=0.0.0.0` exposes the PostgreSQL port on all VPS network interfaces.
-
-Edit the private PostgreSQL environment file:
+Keep `POSTGRES_BIND_IP=127.0.0.1` and create an SSH tunnel from your local machine:
 
 ```bash
-export POSTGRES_ENV_FILE="$HOME/.config/vps-setup/database/postgresql.env"
-nano "$POSTGRES_ENV_FILE"
+ssh -N -L 5432:127.0.0.1:5432 -p SSH_PORT deploy@YOUR_VPS_IP
 ```
 
-Set:
-
-```dotenv
-POSTGRES_BIND_IP=0.0.0.0
-POSTGRES_PORT=5432
-```
-
-Restart only this PostgreSQL service:
-
-```bash
-cd database/postgresql
-docker compose --env-file "$POSTGRES_ENV_FILE" up -d
-docker compose --env-file "$POSTGRES_ENV_FILE" ps
-docker port postgresql 5432
-```
-
-Confirm PostgreSQL is listening publicly on the VPS:
-
-```bash
-ss -ltnp | grep ':5432'
-```
-
-Expected listener:
+Then connect the local database client to:
 
 ```text
-0.0.0.0:5432
-```
-
-If the VPS firewall is enabled, allow remote PostgreSQL access:
-
-```bash
-sudo ufw allow 5432/tcp
-sudo ufw status
-```
-
-If the VPS provider has a cloud firewall or security group, also open inbound TCP port `5432` there.
-
-Connect from a local database client with:
-
-```text
-host: VPS_PUBLIC_IP
+host: 127.0.0.1
 port: 5432
 database: project_db
 user: project_user
 password: project_user_password
 ```
 
-For the crypto trading project on this VPS:
+The tunnel encrypts the connection and avoids a public database listener. Use the project user, not the PostgreSQL admin user.
 
-```text
-host: 43.228.213.109
-port: 5432
-database: crypto_trading_system
-user: crypto_user
-password: POSTGRES_PASSWORD from /home/pthnhan/workspace/crypto_trading_system/.env
+If a separate application server must connect, prefer a private network or VPN. As a last resort, bind PostgreSQL publicly and restrict TCP `5432` in the VPS provider firewall to the exact trusted source IP. Do not rely only on UFW: Docker-published ports can bypass UFW rules.
+
+Confirm the actual listener whenever changing the bind address:
+
+```bash
+docker port postgresql 5432
+ss -ltnp | grep ':5432'
 ```
-
-Use the project user, not the PostgreSQL admin user. If the connection is refused, check the Docker bind address, `ufw`, and the VPS provider firewall. If authentication fails, rotate or recheck the project user's password.
 
 ## Create A Database For A New Project
 
@@ -124,10 +83,10 @@ GRANT ALL PRIVILEGES ON DATABASE crm_api TO crm_api_user;
 
 ## Connection Strings
 
-For an app connecting through the VPS host or IP:
+For an app running directly on the VPS host:
 
 ```text
-DATABASE_URL=postgresql://project_user:change_this_project_password@VPS_HOST:5432/project_db
+DATABASE_URL=postgresql://project_user:change_this_project_password@127.0.0.1:5432/project_db
 ```
 
 For an app running in Docker on the same VPS and attached to `database_network`:
@@ -200,8 +159,8 @@ Major PostgreSQL upgrades can require a dump/restore or `pg_upgrade`. Do not cha
 ## Security Notes
 
 - Keep `POSTGRES_BIND_IP=127.0.0.1` unless remote access is required.
-- If remote access is required, prefer restricting the firewall to trusted source IPs.
-- If you intentionally allow all IPs, use strong project-user passwords, keep backups, and monitor logs.
+- Prefer an SSH tunnel, VPN, or private network for remote access.
+- Docker ports published on `0.0.0.0` can bypass UFW; do not treat UFW as the only protection for a public database listener.
 - Use a unique database user and strong password for each project.
 - Do not reuse the admin password as an application password.
 - Keep the real PostgreSQL env file outside this repository, for example at `$HOME/.config/vps-setup/database/postgresql.env`.

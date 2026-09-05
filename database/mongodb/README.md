@@ -8,11 +8,16 @@ MongoDB creates a database when data is first written to it. The important setup
 
 Run these commands from the repository root.
 
-This module uses `mongo:4.4` so it can run on VPS CPUs without AVX support. MongoDB
-5.0 and newer require AVX-capable CPUs.
+This module uses the supported `mongo:8.0` release. On `x86_64`, MongoDB 5.0 and newer require an AVX-capable CPU. Check the VPS before starting:
 
 ```bash
-cd /home/pthnhan/workspace/vps-setup
+lscpu | grep -qw avx && echo 'AVX supported' || echo 'AVX missing: do not start MongoDB 8'
+```
+
+Do not deploy the end-of-life MongoDB 4.4 branch to work around missing AVX; choose a compatible VPS or a managed database instead.
+
+```bash
+cd /path/to/vps-setup
 export VPS_SETUP_SECRETS="$HOME/.config/vps-setup"
 export MONGODB_ENV_FILE="$VPS_SETUP_SECRETS/database/mongodb.env"
 mkdir -p "$VPS_SETUP_SECRETS/database"
@@ -30,13 +35,23 @@ Change `MONGO_INITDB_ROOT_PASSWORD` before starting the service.
 
 By default, MongoDB listens on `127.0.0.1:27017` on the VPS. This is safer than exposing it publicly.
 
+## Access From Your Local Machine
+
+Keep `MONGO_BIND_IP=127.0.0.1` and create an SSH tunnel:
+
+```bash
+ssh -N -L 27017:127.0.0.1:27017 -p SSH_PORT deploy@YOUR_VPS_IP
+```
+
+Connect your local client to `127.0.0.1:27017`. The tunnel avoids a public MongoDB listener. For a separate application server, prefer a private network or VPN.
+
 ## Create A Database User For A New Project
 
-Open `mongo` as the MongoDB root user from the private env file:
+Open `mongosh` as the MongoDB root user. Passing `-p` without a value prompts for the password and avoids putting it in shell history:
 
 ```bash
 export MONGODB_ENV_FILE="$HOME/.config/vps-setup/database/mongodb.env"
-docker compose --env-file "$MONGODB_ENV_FILE" exec mongodb mongo -u mongo_admin -p 'change-this-mongo-root-password' --authenticationDatabase admin
+docker compose --env-file "$MONGODB_ENV_FILE" exec mongodb mongosh -u mongo_admin -p --authenticationDatabase admin
 ```
 
 Create a project database user:
@@ -63,10 +78,10 @@ db.createUser({
 
 ## Connection Strings
 
-For an app connecting through the VPS host or IP:
+For an app running directly on the VPS host:
 
 ```text
-MONGODB_URI=mongodb://project_user:change_this_project_password@VPS_HOST:27017/project_db?authSource=project_db
+MONGODB_URI=mongodb://project_user:change_this_project_password@127.0.0.1:27017/project_db?authSource=project_db
 ```
 
 For an app running in Docker on the same VPS and attached to `database_network`:
@@ -146,10 +161,13 @@ For larger production databases, use a scheduled backup job and copy backup file
 
 Major MongoDB upgrades can require stepping through intermediate versions. Do not change major versions casually on a production database.
 
+The previous version of this module used MongoDB 4.4. An existing 4.4 data volume cannot be upgraded directly to 8.0. Follow MongoDB's supported sequential upgrade path or dump from 4.4 and restore into a fresh 8.0 instance after testing.
+
 ## Security Notes
 
 - Keep `MONGO_BIND_IP=127.0.0.1` unless remote access is required.
-- If remote access is required, restrict the firewall to trusted source IPs.
+- Prefer an SSH tunnel, VPN, or private network for remote access.
+- Docker ports published on `0.0.0.0` can bypass UFW; do not treat UFW as the only protection for a public database listener.
 - Use a unique database user and strong password for each project.
 - Do not reuse the root password as an application password.
 - Keep the real MongoDB env file outside this repository, for example at `$HOME/.config/vps-setup/database/mongodb.env`.

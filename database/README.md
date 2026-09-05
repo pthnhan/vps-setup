@@ -46,7 +46,7 @@ Use the application repository or a secret manager for application credentials. 
 Choose a database module and start it:
 
 ```bash
-cd /home/pthnhan/workspace/vps-setup
+cd /path/to/vps-setup
 export VPS_SETUP_SECRETS="$HOME/.config/vps-setup"
 mkdir -p "$VPS_SETUP_SECRETS/database"
 cp database/postgresql/.env.example "$VPS_SETUP_SECRETS/database/postgresql.env"
@@ -86,7 +86,7 @@ Start the database service first, then start the UI module. All UI modules join 
 Example:
 
 ```bash
-cd /home/pthnhan/workspace/vps-setup
+cd /path/to/vps-setup
 export VPS_SETUP_SECRETS="$HOME/.config/vps-setup"
 mkdir -p "$VPS_SETUP_SECRETS/database"
 cp database/dbgate/.env.example "$VPS_SETUP_SECRETS/database/dbgate.env"
@@ -130,16 +130,16 @@ postgresql://project_user:project_password@postgresql:5432/project_db
 mongodb://project_user:project_password@mongodb:27017/project_db?authSource=project_db
 ```
 
-### App Runs Outside Docker
+### App Runs On The VPS Outside Docker
 
-Connect through the VPS hostname or IP and the exposed port:
+Keep the database bound to loopback and connect locally:
 
 ```text
-postgresql://project_user:project_password@VPS_HOST:5432/project_db
-mongodb://project_user:project_password@VPS_HOST:27017/project_db?authSource=project_db
+postgresql://project_user:project_password@127.0.0.1:5432/project_db
+mongodb://project_user:project_password@127.0.0.1:27017/project_db?authSource=project_db
 ```
 
-By default, the example modules bind database ports to `127.0.0.1`, which only accepts local connections on the VPS. If an outside server must connect directly, set the bind IP to `0.0.0.0`, open the firewall only for trusted source IPs, and use strong passwords.
+For access from your workstation, keep the loopback bind and use an SSH tunnel. Direct public database exposure is strongly discouraged. Docker-published ports on `0.0.0.0` can bypass UFW, so a UFW rule alone is not a sufficient boundary; see [the security guide](../security/README.md#public-ports).
 
 ## PostgreSQL: Create A Project Database
 
@@ -162,11 +162,11 @@ GRANT ALL PRIVILEGES ON DATABASE project_db TO project_user;
 Connection string examples:
 
 ```text
-DATABASE_URL=postgresql://project_user:change_this_project_password@VPS_HOST:5432/project_db
+DATABASE_URL=postgresql://project_user:change_this_project_password@127.0.0.1:5432/project_db
 DATABASE_URL=postgresql://project_user:change_this_project_password@postgresql:5432/project_db
 ```
 
-Use `VPS_HOST` for host connections and `postgresql` for apps attached to the shared Docker network.
+Use `127.0.0.1` for processes running on the VPS host and `postgresql` for apps attached to the shared Docker network.
 
 ## MongoDB: Create A Project Database
 
@@ -174,7 +174,7 @@ Enter the MongoDB module:
 
 ```bash
 cd database/mongodb
-docker compose --env-file "$VPS_SETUP_SECRETS/database/mongodb.env" exec mongodb mongo -u mongo_admin -p 'change-this-mongo-root-password' --authenticationDatabase admin
+docker compose --env-file "$VPS_SETUP_SECRETS/database/mongodb.env" exec mongodb mongosh -u mongo_admin -p --authenticationDatabase admin
 ```
 
 Create a database user for a project:
@@ -191,18 +191,19 @@ db.createUser({
 Connection string examples:
 
 ```text
-MONGODB_URI=mongodb://project_user:change_this_project_password@VPS_HOST:27017/project_db?authSource=project_db
+MONGODB_URI=mongodb://project_user:change_this_project_password@127.0.0.1:27017/project_db?authSource=project_db
 MONGODB_URI=mongodb://project_user:change_this_project_password@mongodb:27017/project_db?authSource=project_db
 ```
 
-Use `VPS_HOST` for host connections and `mongodb` for apps attached to the shared Docker network.
+Use `127.0.0.1` for processes running on the VPS host and `mongodb` for apps attached to the shared Docker network.
 
 ## Security Notes
 
 - Change every password in the private env file before starting a database.
 - Prefer binding database ports to `127.0.0.1`.
 - Prefer binding database UI ports to `127.0.0.1`.
-- If public database access is unavoidable, restrict the firewall to known IP addresses.
+- For remote administration, use an SSH or VPN tunnel instead of a public database port.
+- Do not assume UFW protects ports published by Docker on `0.0.0.0`; use loopback binds, the provider firewall, or deliberate `DOCKER-USER` rules.
 - Do not expose database UIs directly to the public internet.
 - Do not put real service env files inside this repository. Keep them in a private path such as `$HOME/.config/vps-setup/database`.
 - Give each project its own database user with only the privileges it needs.

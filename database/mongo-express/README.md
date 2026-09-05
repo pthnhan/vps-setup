@@ -11,7 +11,7 @@ Run these commands from the repository root.
 Start MongoDB first, then start mongo-express:
 
 ```bash
-cd /home/pthnhan/workspace/vps-setup
+cd /path/to/vps-setup
 export VPS_SETUP_SECRETS="$HOME/.config/vps-setup"
 export MONGO_EXPRESS_ENV_FILE="$VPS_SETUP_SECRETS/database/mongo-express.env"
 mkdir -p "$VPS_SETUP_SECRETS/database"
@@ -41,7 +41,7 @@ By default, mongo-express listens on `127.0.0.1:8081` on the VPS. This avoids ex
 Use an SSH tunnel:
 
 ```bash
-ssh -L 8081:127.0.0.1:8081 deploy@YOUR_VPS_IP
+ssh -L 8081:127.0.0.1:8081 -p SSH_PORT deploy@YOUR_VPS_IP
 ```
 
 Then open:

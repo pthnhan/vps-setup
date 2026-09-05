@@ -11,7 +11,7 @@ Run these commands from the repository root.
 Start PostgreSQL and/or MongoDB first, then start DbGate:
 
 ```bash
-cd /home/pthnhan/workspace/vps-setup
+cd /path/to/vps-setup
 export VPS_SETUP_SECRETS="$HOME/.config/vps-setup"
 export DBGATE_ENV_FILE="$VPS_SETUP_SECRETS/database/dbgate.env"
 mkdir -p "$VPS_SETUP_SECRETS/database"
@@ -43,7 +43,7 @@ Use the Docker network aliases `postgresql` and `mongodb` because DbGate runs on
 Use an SSH tunnel:
 
 ```bash
-ssh -L 3000:127.0.0.1:3000 deploy@YOUR_VPS_IP
+ssh -L 3000:127.0.0.1:3000 -p SSH_PORT deploy@YOUR_VPS_IP
 ```
 
 Then open:
@@ -54,51 +54,7 @@ http://127.0.0.1:3000
 
 Log in with `DBGATE_LOGIN` and `DBGATE_PASSWORD` from the private env file. When `DBGATE_BASIC_AUTH=1`, the browser shows an HTTP Basic Auth prompt.
 
-## Open Directly From A Browser
-
-Use this only when DbGate must be reachable without an SSH tunnel or reverse proxy. Edit the private env file:
-
-```bash
-export DBGATE_ENV_FILE="$HOME/.config/vps-setup/database/dbgate.env"
-nano "$DBGATE_ENV_FILE"
-```
-
-```dotenv
-DBGATE_BIND_IP=0.0.0.0
-DBGATE_PORT=3000
-```
-
-Restart DbGate:
-
-```bash
-cd database/dbgate
-docker compose --env-file "$DBGATE_ENV_FILE" up -d
-docker compose --env-file "$DBGATE_ENV_FILE" ps
-docker port dbgate 3000
-```
-
-If the VPS firewall is enabled, allow the UI port:
-
-```bash
-sudo ufw allow 3000/tcp
-sudo ufw status
-```
-
-If the VPS provider has a cloud firewall or security group, also open inbound TCP port `3000` there.
-
-Then open:
-
-```text
-http://VPS_PUBLIC_IP:3000
-```
-
-For this VPS:
-
-```text
-http://43.228.213.109:3000
-```
-
-Log in with `DBGATE_LOGIN` and `DBGATE_PASSWORD` from the private env file. When `DBGATE_BASIC_AUTH=1`, the browser shows an HTTP Basic Auth prompt before loading the UI.
+If browser access must be shared, put DbGate behind an authenticated HTTPS reverse proxy or VPN; do not bind this administration UI directly to a public interface.
 
 ## Add A PostgreSQL Connection
 
@@ -149,7 +105,7 @@ docker compose --env-file "$DBGATE_ENV_FILE" down
 
 - Keep `DBGATE_BIND_IP=127.0.0.1` unless DbGate is behind a properly secured reverse proxy.
 - Use a strong `DBGATE_PASSWORD`.
-- Keep `DBGATE_BASIC_AUTH=1` when binding DbGate to a public interface.
-- Do not expose DbGate directly to the public internet unless you intentionally accept that risk.
+- Keep `DBGATE_BASIC_AUTH=1` as a second layer even when using a tunnel or authenticated reverse proxy.
+- Do not expose DbGate directly to the public internet.
 - Prefer project-specific database users when browsing application databases.
 - Keep the real DbGate env file outside this repository, for example at `$HOME/.config/vps-setup/database/dbgate.env`.
