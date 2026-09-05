@@ -36,6 +36,11 @@ Run the steps in order. Keep the original root SSH session open until a second s
 
 ```bash
 ssh root@YOUR_VPS_IP
+```
+
+After logging in to the VPS, run:
+
+```bash
 apt update
 apt upgrade -y
 apt install -y ca-certificates curl git gnupg htop unzip ufw fail2ban unattended-upgrades zsh build-essential
