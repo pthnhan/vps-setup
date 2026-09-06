@@ -139,7 +139,7 @@ postgresql://project_user:project_password@127.0.0.1:5432/project_db
 mongodb://project_user:project_password@127.0.0.1:27017/project_db?authSource=project_db
 ```
 
-For access from your workstation, keep the loopback bind and use an SSH tunnel. Direct public database exposure is strongly discouraged. Docker-published ports on `0.0.0.0` can bypass UFW, so a UFW rule alone is not a sufficient boundary; see [the security guide](../security/README.md#public-ports).
+For access from your workstation, keep the loopback bind and use an SSH tunnel. Direct public database exposure is strongly discouraged. Docker-published ports on `0.0.0.0` can bypass UFW, so a UFW rule alone is not a sufficient boundary; see [the first-setup guide](../1st-setup/README.md#9-install-docker-engine-and-compose).
 
 ## PostgreSQL: Create A Project Database
 
