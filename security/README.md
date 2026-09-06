@@ -2,9 +2,13 @@
 
 This guide targets a new Ubuntu VPS managed over SSH. Use the VPS provider's firewall as the outer layer and UFW as the host firewall.
 
+Read this page in your browser and run the commands directly on the VPS as the administrative user (`deploy` below). You do not need to clone this repository or download any template. First complete [system updates and administrative user creation](../README.md#new-vps-checklist), and verify SSH key login and `sudo` for that user.
+
 ## Avoid SSH Lockout
 
 Keep one working SSH session open throughout this procedure. Make sure the provider's web or serial console works before changing SSH.
+
+These steps assume the initial SSH port is `22`. If your provider uses another port, substitute it wherever `22` appears, including the temporary firewall rules and socket configuration.
 
 Choose an unused port from `1024` to `65535`. This guide uses `2222`; replace it everywhere if you choose another port.
 
@@ -26,36 +30,83 @@ sudo ufw status verbose
 
 `ufw limit` rate-limits repeated connection attempts. Fail2ban adds longer bans based on authentication failures.
 
-### 2. Install The SSH Drop-In
+### 2. Create The SSH Configuration Directly
 
-From the repository root:
+Keep both ports listening until the new login is verified. Replace `2222` and `deploy` below with your chosen port and administrative user **before running** the command. On an existing server, back up any existing `00-hardening.conf` before replacing it.
 
 ```bash
-sudo install -m 600 security/sshd-hardening.conf.example /etc/ssh/sshd_config.d/00-hardening.conf
-sudo nano /etc/ssh/sshd_config.d/00-hardening.conf
+sudo install -d -m 755 /etc/ssh/sshd_config.d
+sudo tee /etc/ssh/sshd_config.d/00-hardening.conf > /dev/null <<'EOF'
+Port 22
+Port 2222
+PermitRootLogin no
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PubkeyAuthentication yes
+MaxAuthTries 3
+LoginGraceTime 30
+X11Forwarding no
+AllowUsers deploy
+EOF
+sudo chmod 600 /etc/ssh/sshd_config.d/00-hardening.conf
 ```
 
-Set `Port` to the port opened above. Set `AllowUsers` to the actual administrative user, or remove that line if multiple users need SSH access.
+List all intended SSH users on `AllowUsers`, separated by spaces. The `00-` prefix is intentional: OpenSSH uses the first value for most directives, so this file must precede cloud-image defaults such as `50-cloud-init.conf`.
 
-The `00-` prefix is intentional. OpenSSH uses the first value it reads for most directives, and Ubuntu cloud images can include an earlier `50-cloud-init.conf`; a `99-` hardening file may therefore fail to override it.
-
-Validate the full SSH configuration before restart:
+Validate before applying:
 
 ```bash
 sudo sshd -t
 sudo sshd -T | grep -E '^(port|permitrootlogin|passwordauthentication|kbdinteractiveauthentication|pubkeyauthentication|allowusers) '
-sudo systemctl restart ssh.service
-sudo ss -ltnp | grep sshd
 ```
 
-If `sshd -t` prints an error, fix it before restarting. On Debian and Ubuntu the systemd service is normally named `ssh.service`; confirm with `systemctl status ssh.service`.
+Stop if validation fails or effective settings differ from the configuration above. Check `/etc/ssh/sshd_config` and its included files for earlier settings, extra `Port` entries, or applicable `Match` blocks before continuing.
+
+Check whether systemd owns the SSH listening socket:
+
+```bash
+systemctl is-active ssh.socket
+```
+
+If it prints `active`, create a socket override with the same two ports. Back up an existing `99-listen.conf` before replacing it:
+
+```bash
+sudo install -d -m 755 /etc/systemd/system/ssh.socket.d
+sudo tee /etc/systemd/system/ssh.socket.d/99-listen.conf > /dev/null <<'EOF'
+[Socket]
+ListenStream=
+ListenStream=22
+ListenStream=2222
+EOF
+sudo systemctl daemon-reload
+sudo systemctl restart ssh.socket ssh.service
+```
+
+The empty `ListenStream=` clears inherited listeners. This explicit override also covers images where changing `Port` in `sshd_config` alone does not update the socket.
+
+If `ssh.socket` is inactive or not found, apply the validated configuration with:
+
+```bash
+sudo systemctl restart ssh.service
+```
+
+For either mode, verify that both ports are listening; the socket may be owned by systemd rather than `sshd`:
+
+```bash
+sudo ss -ltnp
+```
 
 ### 3. Test A New Login
 
 From a different local terminal:
 
 ```bash
-ssh -p 2222 deploy@YOUR_VPS_IP
+ssh -o PreferredAuthentications=publickey -o PasswordAuthentication=no -p 2222 deploy@YOUR_VPS_IP
+```
+
+Inside that new VPS session:
+
+```bash
 sudo -v
 ```
 
@@ -63,7 +114,9 @@ Confirm that key login and `sudo` both work. Do not use the existing session as 
 
 ### 4. Close Port 22
 
-Only after the new login succeeds:
+Only after the new key login and `sudo` succeed, remove the `Port 22` line from `/etc/ssh/sshd_config.d/00-hardening.conf`. If you created the socket override, also remove `ListenStream=22` from `/etc/systemd/system/ssh.socket.d/99-listen.conf`; keep the empty `ListenStream=` and `ListenStream=2222` lines.
+
+Run `sudo sshd -t` again, then repeat the applicable restart commands from step 2 (including `daemon-reload` for socket mode). Check `sudo sshd -T` and `sudo ss -ltnp`: SSH should now listen only on the new port. If port 22 remains, find and remove its other explicit `Port` or socket listener entry before proceeding. Test a fresh login on port `2222` again, then remove the fallback firewall rule:
 
 ```bash
 sudo ufw delete allow 22/tcp
@@ -72,7 +125,7 @@ sudo ufw status numbered
 
 Remove TCP `22` from the provider firewall too. Keep only the custom SSH port and application ports that are intentionally public.
 
-Update local SSH configuration for convenience:
+On your local computer, add this entry to `~/.ssh/config` for convenience (use the path to your actual private key):
 
 ```sshconfig
 Host my-vps
@@ -84,16 +137,34 @@ Host my-vps
 
 Then connect with `ssh my-vps`.
 
+### Recovery If The New Login Fails
+
+Keep port 22 allowed in both firewalls and keep the original session open. Inspect `sudo journalctl -u ssh.service -u ssh.socket --since today`, the effective SSH settings, and `sudo ss -ltnp`. Correct the configuration, validate, and repeat the applicable restart commands from step 2. If you need to revert, restore the previous files (or remove only the files created by this procedure on a fresh VPS) and apply the same validation and restart steps. Use the provider console if no SSH session remains available. Do not close port 22 until the new login succeeds.
+
 ## Fail2ban
 
-Install the example and make its port match the effective SSH port:
+Create the jail directly on the VPS. Replace `2222` with the verified SSH port before running this block; back up any existing `sshd.local` before replacing it:
 
 ```bash
 sudo apt install -y fail2ban
-sudo install -m 644 security/fail2ban-sshd.local.example /etc/fail2ban/jail.d/sshd.local
-sudo nano /etc/fail2ban/jail.d/sshd.local
+sudo tee /etc/fail2ban/jail.d/sshd.local > /dev/null <<'EOF'
+[sshd]
+enabled = true
+port = 2222
+backend = systemd
+maxretry = 5
+findtime = 10m
+bantime = 1h
+EOF
+sudo chmod 644 /etc/fail2ban/jail.d/sshd.local
 sudo fail2ban-client -t
-sudo systemctl enable --now fail2ban
+```
+
+Only if validation succeeds, enable and restart Fail2ban so an already-running service also loads the new jail:
+
+```bash
+sudo systemctl enable fail2ban
+sudo systemctl restart fail2ban
 sudo fail2ban-client status sshd
 ```
 
@@ -167,6 +238,7 @@ Review the provider firewall separately; it is not visible in UFW output.
 ## References
 
 - [Ubuntu OpenSSH server guide](https://ubuntu.com/server/docs/how-to/security/openssh-server/)
+- [Ubuntu SSH socket activation](https://discourse.ubuntu.com/t/sshd-now-uses-socket-based-activation-ubuntu-22-10-and-later/30189)
 - [Ubuntu firewall guide](https://ubuntu.com/server/docs/security-firewall/)
 - [Ubuntu automatic security updates](https://documentation.ubuntu.com/security/security-updates/)
 - [Docker firewall limitations](https://docs.docker.com/engine/network/packet-filtering-firewalls/)

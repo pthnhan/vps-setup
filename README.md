@@ -2,13 +2,13 @@
 
 A practical, security-first toolkit for preparing a new Ubuntu VPS and running reusable services with Docker Compose.
 
+Read the initial setup guides in your browser and run their commands directly on the VPS. No clone, downloaded template, or repository working directory is needed until you install a service from `database/`.
+
 ## Repository Layout
 
 ```text
 security/
   README.md
-  sshd-hardening.conf.example
-  fail2ban-sshd.local.example
 database/
   README.md
   postgresql/
@@ -43,7 +43,7 @@ After logging in to the VPS, run:
 ```bash
 apt update
 apt upgrade -y
-apt install -y ca-certificates curl git gnupg htop unzip ufw fail2ban unattended-upgrades zsh build-essential
+apt install -y sudo nano ca-certificates curl git gnupg htop unzip ufw fail2ban unattended-upgrades zsh build-essential
 ```
 
 Reboot if required, then reconnect:
@@ -66,7 +66,12 @@ fi
 Open a second terminal and verify the key before continuing:
 
 ```bash
-ssh deploy@YOUR_VPS_IP
+ssh -o PreferredAuthentications=publickey -o PasswordAuthentication=no deploy@YOUR_VPS_IP
+```
+
+In that new VPS session, verify administrative access:
+
+```bash
 sudo -v
 ```
 
@@ -82,52 +87,11 @@ Changing the port reduces automated log noise, but it is not a substitute for ke
 4. Test a new login on the new port.
 5. Only then remove port 22.
 
-The full copy-and-verify procedure is in [security/README.md](security/README.md). Example with TCP port `2222`:
-
-```bash
-sudo ufw default deny incoming
-sudo ufw default allow outgoing
-sudo ufw limit 2222/tcp comment 'SSH'
-sudo ufw allow 22/tcp comment 'temporary SSH fallback'
-sudo ufw logging low
-sudo ufw enable
-```
-
-Install the SSH drop-in and replace the example port or user first:
-
-```bash
-sudo install -m 600 security/sshd-hardening.conf.example /etc/ssh/sshd_config.d/00-hardening.conf
-sudo nano /etc/ssh/sshd_config.d/00-hardening.conf
-sudo sshd -t
-sudo systemctl restart ssh.service
-```
-
-Test from a new terminal:
-
-```bash
-ssh -p 2222 deploy@YOUR_VPS_IP
-```
-
-After that succeeds, remove the fallback rule:
-
-```bash
-sudo ufw delete allow 22/tcp
-sudo ufw status numbered
-```
-
-Never close the working SSH session before the new login succeeds.
+Open [the SSH port and firewall guideline](security/README.md#avoid-ssh-lockout) in your browser and complete steps 1–4 there before continuing here. It contains the configuration inline, commands to run directly on the VPS, verification for both `ssh.service` and `ssh.socket`, and recovery instructions. No repository files are required.
 
 ### 4. Enable Brute-Force Protection And Security Updates
 
-Install the Fail2ban example, ensure its port matches SSH, then verify the jail:
-
-```bash
-sudo install -m 644 security/fail2ban-sshd.local.example /etc/fail2ban/jail.d/sshd.local
-sudo nano /etc/fail2ban/jail.d/sshd.local
-sudo fail2ban-client -t
-sudo systemctl enable --now fail2ban
-sudo fail2ban-client status sshd
-```
+Follow [the direct Fail2ban setup](security/README.md#fail2ban), using the SSH port verified in step 3.
 
 Enable automatic security updates and check their timers:
 
@@ -203,6 +167,15 @@ sudo chsh -s "$(command -v zsh)" deploy
 Shell frameworks and plugins are optional. Review remote install scripts before running them, keep configuration per user, and avoid adding language-runtime paths that are not actually installed.
 
 ## Using Service Modules
+
+Only after the initial setup is verified, clone this repository as `deploy` on the VPS to use its Docker Compose modules:
+
+```bash
+git clone https://github.com/pthnhan/vps-setup.git "$HOME/vps-setup"
+cd "$HOME/vps-setup"
+```
+
+If already cloned, enter your existing checkout instead. Run the example below from the repository root.
 
 Create only the private env files for services you run:
 
