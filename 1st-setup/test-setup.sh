@@ -36,6 +36,7 @@ mock_finalize_system() {
     command grep "$@"
   }
   write_ssh_config() { printf 'write\n' >> "$work/events"; }
+  configure_admin_shell_and_git() { printf 'shell\n' >> "$work/events"; }
   restart_ssh() { :; }
   port_is_listening() { [[ $1 == "$SSH_PORT" ]]; }
   ufw() { printf 'ufw\n' >> "$work/events"; }
@@ -63,7 +64,8 @@ reject_session() {
 accept_session() {
   mock_finalize_system
   finalize >/dev/null
-  [[ $(head -n 1 "$work/events") == write ]] || fail 'did not configure SSH'
+  [[ $(sed -n '1p' "$work/events") == shell ]] || fail 'did not configure the admin shell before SSH hardening'
+  [[ $(sed -n '2p' "$work/events") == write ]] || fail 'did not configure SSH'
   command grep -q '^ufw$' "$work/events" || fail 'did not update firewall'
 }
 
@@ -130,6 +132,33 @@ config_success() {
   command grep -qxF 'Port 2222' "$SSH_CONFIG" || fail 'new port missing'
 }
 
+admin_shell_and_git_setup() {
+  local test_admin_home="$work/deploy" origin="$work/zsh-autosuggestions"
+  mkdir -p "$test_admin_home" "$origin"
+  git init -q -b main "$origin"
+  printf '# test plugin\n' > "$origin/zsh-autosuggestions.zsh"
+  git -C "$origin" add zsh-autosuggestions.zsh
+  git -C "$origin" -c user.name=Test -c user.email=test@example.com commit -qm initial
+
+  ADMIN_USER=deploy
+  GIT_USER_NAME='Deploy User'
+  GIT_USER_EMAIL='deploy@example.com'
+  ZSH_AUTOSUGGESTIONS_REPO="file://$origin"
+  getent() { printf 'deploy:x:1000:1000::%s:/bin/bash\n' "$test_admin_home"; }
+  sudo() { shift 2; "$@"; }
+  usermod() { printf '%s\n' "$*" > "$work/usermod"; }
+
+  configure_admin_shell_and_git
+  configure_admin_shell_and_git
+
+  [[ -f $test_admin_home/.zsh/zsh-autosuggestions/zsh-autosuggestions.zsh ]] || fail 'autosuggestions plugin missing'
+  [[ $(grep -cF 'source "$HOME/.zsh/zsh-autosuggestions/zsh-autosuggestions.zsh"' "$test_admin_home/.zshrc") == 1 ]] || fail 'autosuggestions source is missing or duplicated'
+  [[ $(HOME="$test_admin_home" git config --global user.name) == 'Deploy User' ]] || fail 'Git user.name not configured'
+  [[ $(HOME="$test_admin_home" git config --global user.email) == 'deploy@example.com' ]] || fail 'Git user.email not configured'
+  [[ $(HOME="$test_admin_home" git config --global submodule.recurse) == true ]] || fail 'Git submodule recursion not configured'
+  [[ $(cat "$work/usermod") == '-s /bin/zsh deploy' ]] || fail 'Zsh is not the default shell'
+}
+
 native_conflict() {
   SSH_CONFIG="$work/native-conflict.conf"
   SSH_CONNECTION='192.0.2.1 54321 192.0.2.2 2222'
@@ -155,6 +184,7 @@ for kind in missing wrong-port malformed wrong-user; do run reject_session "$kin
 run accept_session
 run config_success setup
 run config_success finalize
+run admin_shell_and_git_setup
 run reject_setup_rerun
 for kind in syntax conflict restart listener; do run config_rollback "$kind"; done
 if command -v sshd >/dev/null && command -v ssh-keygen >/dev/null; then

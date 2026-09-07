@@ -42,6 +42,8 @@ SSH_PORT="2222"
 SSH_PUBLIC_KEY="PASTE_YOUR_PUBLIC_KEY_HERE"
 TIMEZONE="UTC"
 SWAP_SIZE_GB="2"
+GIT_USER_NAME="YOUR_NAME"
+GIT_USER_EMAIL="YOUR_EMAIL"
 ```
 
 | Setting | Value to use |
@@ -51,6 +53,8 @@ SWAP_SIZE_GB="2"
 | `SSH_PUBLIC_KEY` | Complete `.pub` line from step 1 |
 | `TIMEZONE` | `UTC`, `Asia/Ho_Chi_Minh`, or another valid timezone |
 | `SWAP_SIZE_GB` | GiB to allocate, or `0` to skip |
+| `GIT_USER_NAME` | Name used for commits made by the administrator |
+| `GIT_USER_EMAIL` | Email used for commits made by the administrator |
 
 Open the chosen TCP port in the **provider firewall**. Keep TCP `22` open.
 
@@ -88,6 +92,10 @@ sudo env SSH_CONNECTION="$SSH_CONNECTION" bash /root/setup.sh --finalize
 ```
 
 Wait for `First setup complete`.
+
+Finalize also makes Zsh the administrator's default shell, enables
+`zsh-autosuggestions`, and configures the Git name, email, and recursive
+submodule support. These changes take effect in the next login session.
 
 ## 7. Verify And Reboot
 

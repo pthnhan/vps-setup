@@ -7,10 +7,13 @@ SSH_PORT="2222"
 SSH_PUBLIC_KEY="PASTE_YOUR_PUBLIC_KEY_HERE"
 TIMEZONE="UTC"
 SWAP_SIZE_GB="2"
+GIT_USER_NAME="YOUR_NAME"
+GIT_USER_EMAIL="YOUR_EMAIL"
 
 SCRIPT_PATH="$(readlink -f "$0")"
 SSH_CONFIG="/etc/ssh/sshd_config.d/00-vps-setup.conf"
 FAIL2BAN_CONFIG="/etc/fail2ban/jail.d/sshd.local"
+ZSH_AUTOSUGGESTIONS_REPO="https://github.com/zsh-users/zsh-autosuggestions.git"
 
 log() {
   printf '\n==> %s\n' "$1"
@@ -36,6 +39,8 @@ validate() {
   [[ $SSH_PUBLIC_KEY != "PASTE_YOUR_PUBLIC_KEY_HERE" ]] || die "Set SSH_PUBLIC_KEY before running."
   [[ $SSH_PUBLIC_KEY != *$'\n'* ]] || die "SSH_PUBLIC_KEY must contain exactly one line."
   [[ $SWAP_SIZE_GB =~ ^[0-9]+$ ]] || die "SWAP_SIZE_GB must be a non-negative integer."
+  [[ -n $GIT_USER_NAME && $GIT_USER_NAME != "YOUR_NAME" && $GIT_USER_NAME != *$'\n'* ]] || die "Set GIT_USER_NAME to one line."
+  [[ $GIT_USER_EMAIL == *@* && $GIT_USER_EMAIL != *[[:space:]]* ]] || die "Set GIT_USER_EMAIL to a valid email address."
   timedatectl list-timezones | grep -Fx "$TIMEZONE" >/dev/null || die "TIMEZONE is invalid."
 
   local key_file
@@ -236,6 +241,25 @@ EOF
   usermod -aG docker "$ADMIN_USER"
 }
 
+configure_admin_shell_and_git() {
+  local admin_home plugin_dir source_line
+  admin_home="$(getent passwd "$ADMIN_USER" | cut -d: -f6)"
+  plugin_dir="$admin_home/.zsh/zsh-autosuggestions"
+  source_line='source "$HOME/.zsh/zsh-autosuggestions/zsh-autosuggestions.zsh"'
+
+  log "Configuring Zsh autosuggestions and Git for $ADMIN_USER"
+  sudo -u "$ADMIN_USER" env HOME="$admin_home" mkdir -p "$admin_home/.zsh"
+  if [[ ! -d $plugin_dir/.git ]]; then
+    sudo -u "$ADMIN_USER" env HOME="$admin_home" git clone --depth 1 "$ZSH_AUTOSUGGESTIONS_REPO" "$plugin_dir"
+  fi
+  sudo -u "$ADMIN_USER" env HOME="$admin_home" sh -c \
+    'touch "$HOME/.zshrc"; grep -qxF "$1" "$HOME/.zshrc" || printf "\n%s\n" "$1" >> "$HOME/.zshrc"' sh "$source_line"
+  sudo -u "$ADMIN_USER" env HOME="$admin_home" git config --global user.name "$GIT_USER_NAME"
+  sudo -u "$ADMIN_USER" env HOME="$admin_home" git config --global user.email "$GIT_USER_EMAIL"
+  sudo -u "$ADMIN_USER" env HOME="$admin_home" git config --global submodule.recurse true
+  usermod -s "$(command -v zsh)" "$ADMIN_USER"
+}
+
 setup() {
   validate
   if [[ -f $SSH_CONFIG ]] && grep -qiE '^[[:space:]]*PermitRootLogin[[:space:]]+no([[:space:]]|$)' "$SSH_CONFIG"; then
@@ -275,6 +299,8 @@ finalize() {
   [[ -n $client_ip && -n $server_ip && $client_port =~ ^[0-9]+$ && $connected_port =~ ^[0-9]+$ && -z $extra && $SSH_CONNECTION != *$'\n'* ]] || die "SSH_CONNECTION is malformed; reconnect directly by SSH."
   [[ $connected_port == "$SSH_PORT" ]] || die "Reconnect on port $SSH_PORT before finalizing (current port: $connected_port)."
   [[ ${SUDO_USER:-} == "$ADMIN_USER" ]] || die "Log in directly as $ADMIN_USER and run finalize with sudo."
+
+  configure_admin_shell_and_git
 
   log "Disabling root/password SSH login and removing port 22"
   write_ssh_config finalize
