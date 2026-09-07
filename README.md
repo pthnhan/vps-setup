@@ -1,68 +1,33 @@
 # VPS Setup Toolkit
 
-A small set of guides and Docker Compose modules for preparing a new Ubuntu VPS and running shared services.
+## Setup Order
 
-## Start Here
+1. [Prepare Ubuntu, finalize SSH, reboot, and configure local SSH](1st-setup/README.md).
+2. [Install a database](database/README.md).
+3. Create a database user for each project, then connect the application.
+4. Install a database UI if needed.
 
-For a completely new VPS, follow [1st-setup/README.md](1st-setup/README.md). Its setup script updates Ubuntu, creates the administrative user, installs the SSH key, configures SSH/UFW/Fail2ban, adds swap, and installs Docker.
+| Module | Guide |
+| --- | --- |
+| PostgreSQL | [Install and manage](database/postgresql/README.md) |
+| MongoDB | [Install and manage](database/mongodb/README.md) |
+| DbGate | [PostgreSQL and MongoDB UI](database/dbgate/README.md) |
+| pgAdmin | [PostgreSQL UI](database/pgadmin/README.md) |
+| mongo-express | [Private MongoDB maintenance UI](database/mongo-express/README.md) |
 
-Do not clone this repository onto the VPS during the initial setup. Clone it only after the `1st-setup` guide says the server is ready.
-
-## Repository Layout
-
-```text
-1st-setup/
-  README.md
-  setup.sh
-database/
-  README.md
-  postgresql/
-  mongodb/
-  dbgate/
-  pgadmin/
-  mongo-express/
-```
-
-## Service Modules
-
-Read [database/README.md](database/README.md) before installing a database or database UI.
-
-Database services:
-
-- [PostgreSQL](database/postgresql/README.md)
-- [MongoDB](database/mongodb/README.md)
-
-Database UIs:
-
-- [DbGate](database/dbgate/README.md)
-- [pgAdmin](database/pgadmin/README.md)
-- [mongo-express](database/mongo-express/README.md)
-
-Keep real credentials outside this repository under `$HOME/.config/vps-setup/`. Only `.env.example` templates belong in Git.
-
-## After First Setup
-
-When the first-setup script has been finalized and the new SSH login works, clone the repository as the administrative user:
-
-```bash
-git clone https://github.com/pthnhan/vps-setup.git "$HOME/vps-setup"
-cd "$HOME/vps-setup"
-```
-
-Then continue with the service module you need.
-
-## Local Checks
+<details>
+<summary>Repository checks — run locally</summary>
 
 ```bash
 bash 1st-setup/test-setup.sh
 ```
 
-The checks use temporary files and replace privileged operations; they do not configure your computer. When `sshd` is installed, they also validate generated configurations and conflicting `Match` rules with the real OpenSSH parser. They do not replace an end-to-end test on a disposable Ubuntu VPS.
-
-With Docker Compose installed, validate all module templates without starting containers:
+With Docker Compose installed:
 
 ```bash
 for module in database/*/; do
   docker compose -f "$module/docker-compose.yml" --env-file "$module/.env.example" config --quiet || break
 done
 ```
+
+</details>

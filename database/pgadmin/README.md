@@ -1,17 +1,13 @@
 # pgAdmin
 
-pgAdmin is a PostgreSQL-focused administration UI. Use it when you want deeper PostgreSQL workflows than a general database UI provides.
+Follow [database prerequisites](../README.md) first.
 
-For a single UI that can connect to both PostgreSQL and MongoDB, use [DbGate](../dbgate/README.md).
+## 1. Configure — VPS
 
-## Start pgAdmin
-
-Run these commands from the repository root.
-
-Start PostgreSQL first, then start pgAdmin:
+Start [PostgreSQL](../postgresql/README.md) first.
 
 ```bash
-cd /path/to/vps-setup
+cd "$HOME/vps-setup"
 export VPS_SETUP_SECRETS="$HOME/.config/vps-setup"
 export PGADMIN_ENV_FILE="$VPS_SETUP_SECRETS/database/pgadmin.env"
 umask 077
@@ -19,73 +15,40 @@ mkdir -p "$VPS_SETUP_SECRETS/database"
 test -e "$PGADMIN_ENV_FILE" || cp database/pgadmin/.env.example "$PGADMIN_ENV_FILE"
 chmod 600 "$PGADMIN_ENV_FILE"
 nano "$PGADMIN_ENV_FILE"
+```
 
+Set `PGADMIN_DEFAULT_PASSWORD` to a new password. Keep the bind IP at `127.0.0.1`. Set `PGADMIN_DEFAULT_EMAIL` to your login email.
+
+## 2. Start — VPS
+
+```bash
 cd database/pgadmin
 docker network inspect database_network >/dev/null 2>&1 || docker network create database_network
 docker compose --env-file "$PGADMIN_ENV_FILE" up -d
 docker compose --env-file "$PGADMIN_ENV_FILE" ps
 ```
 
-Change `PGADMIN_DEFAULT_EMAIL` and `PGADMIN_DEFAULT_PASSWORD` before starting the service.
+## 3. Open — Local
 
-By default, pgAdmin listens on `127.0.0.1:5050` on the VPS. This avoids exposing a database administration UI directly to the public internet.
-
-## Open From Your Local Machine
-
-Use an SSH tunnel:
+Keep this tunnel running:
 
 ```bash
-ssh -i ~/.ssh/id_ed25519_vps -o ExitOnForwardFailure=yes -N -L 5050:127.0.0.1:5050 -p SSH_PORT deploy@YOUR_VPS_IP
+ssh -o ExitOnForwardFailure=yes -N -L 5050:127.0.0.1:5050 vps
 ```
 
-Then open:
+Open `http://127.0.0.1:5050` and log in with `PGADMIN_DEFAULT_EMAIL` / `PGADMIN_DEFAULT_PASSWORD`.
 
-```text
-http://127.0.0.1:5050
-```
+## 4. Register A Server
 
-Log in with `PGADMIN_DEFAULT_EMAIL` and `PGADMIN_DEFAULT_PASSWORD` from the private env file.
+Select **Add New Server** and enter:
 
-## Add The PostgreSQL Server
+| Field | Value |
+| --- | --- |
+| Name | Project PostgreSQL |
+| Host name/address | `postgresql` |
+| Port | `5432` |
+| Maintenance database | `project_db` |
+| Username | `project_user` |
+| Password | Project database password |
 
-In pgAdmin, choose **Add New Server**.
-
-General tab:
-
-```text
-Name: PostgreSQL
-```
-
-Connection tab:
-
-```text
-Host name/address: postgresql
-Port: 5432
-Maintenance database: project_db
-Username: project_user
-Password: project_user_password
-```
-
-Use `postgresql` as the host when PostgreSQL is attached to the shared `database_network`. Prefer a project-specific database user for application databases. Use the PostgreSQL admin user only for maintenance tasks.
-
-## Operations
-
-Run these commands from `database/pgadmin`.
-
-```bash
-export PGADMIN_ENV_FILE="$HOME/.config/vps-setup/database/pgadmin.env"
-docker compose --env-file "$PGADMIN_ENV_FILE" ps
-docker compose --env-file "$PGADMIN_ENV_FILE" logs -f
-docker compose --env-file "$PGADMIN_ENV_FILE" restart
-docker compose --env-file "$PGADMIN_ENV_FILE" down
-```
-
-`docker compose down` keeps the named volume by default. pgAdmin settings are stored in the `pgadmin_data` Docker volume unless you change `PGADMIN_VOLUME_NAME`.
-
-## Security Notes
-
-- Keep `PGADMIN_BIND_IP=127.0.0.1` unless pgAdmin is behind a properly secured reverse proxy.
-- Use a strong `PGADMIN_DEFAULT_PASSWORD`.
-- Do not expose pgAdmin directly to the public internet.
-- Use project-specific database users for application databases.
-- Keep the real pgAdmin env file outside this repository, for example at `$HOME/.config/vps-setup/database/pgadmin.env`.
+See [service operations](../README.md#4-manage-a-service--vps) for logs, restarts, and stopping.
