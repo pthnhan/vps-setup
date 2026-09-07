@@ -10,8 +10,9 @@ Run these commands from the repository root.
 cd /path/to/vps-setup
 export VPS_SETUP_SECRETS="$HOME/.config/vps-setup"
 export POSTGRES_ENV_FILE="$VPS_SETUP_SECRETS/database/postgresql.env"
+umask 077
 mkdir -p "$VPS_SETUP_SECRETS/database"
-cp database/postgresql/.env.example "$POSTGRES_ENV_FILE"
+test -e "$POSTGRES_ENV_FILE" || cp database/postgresql/.env.example "$POSTGRES_ENV_FILE"
 chmod 600 "$POSTGRES_ENV_FILE"
 nano "$POSTGRES_ENV_FILE"
 
@@ -30,7 +31,7 @@ By default, PostgreSQL listens on `127.0.0.1:5432` on the VPS. This is safer tha
 Keep `POSTGRES_BIND_IP=127.0.0.1` and create an SSH tunnel from your local machine:
 
 ```bash
-ssh -N -L 5432:127.0.0.1:5432 -p SSH_PORT deploy@YOUR_VPS_IP
+ssh -i ~/.ssh/id_ed25519_vps -o ExitOnForwardFailure=yes -N -L 5432:127.0.0.1:5432 -p SSH_PORT deploy@YOUR_VPS_IP
 ```
 
 Then connect the local database client to:
@@ -68,7 +69,7 @@ Create a project user and database:
 ```sql
 CREATE USER project_user WITH PASSWORD 'change_this_project_password';
 CREATE DATABASE project_db OWNER project_user;
-GRANT ALL PRIVILEGES ON DATABASE project_db TO project_user;
+REVOKE ALL ON DATABASE project_db FROM PUBLIC;
 \q
 ```
 
@@ -77,7 +78,7 @@ Use one unique database and user per app. For example, a project named `crm-api`
 ```sql
 CREATE USER crm_api_user WITH PASSWORD 'use_a_long_random_password';
 CREATE DATABASE crm_api OWNER crm_api_user;
-GRANT ALL PRIVILEGES ON DATABASE crm_api TO crm_api_user;
+REVOKE ALL ON DATABASE crm_api FROM PUBLIC;
 \q
 ```
 
@@ -134,14 +135,20 @@ docker compose --env-file "$POSTGRES_ENV_FILE" down
 Create a backup for one project database:
 
 ```bash
-mkdir -p backups
-docker compose --env-file "$POSTGRES_ENV_FILE" exec -T postgres pg_dump -U postgres project_db > backups/project_db.sql
+umask 077
+export BACKUP_DIR="$HOME/.local/state/vps-setup/backups"
+mkdir -p "$BACKUP_DIR"
+backup_tmp="$(mktemp "$BACKUP_DIR/project_db.sql.XXXXXX")"
+docker compose --env-file "$POSTGRES_ENV_FILE" exec -T postgres pg_dump -U postgres project_db > "$backup_tmp" &&
+  mv "$backup_tmp" "$BACKUP_DIR/project_db.sql"
 ```
 
-Restore a backup:
+On dump failure, the last successful backup remains unchanged; inspect/remove the temporary file. Copy successful backups off the VPS.
+
+Restore into an existing empty `project_db` after creating its owner role (as above). This restores data/objects, not cluster roles:
 
 ```bash
-docker compose --env-file "$POSTGRES_ENV_FILE" exec -T postgres psql -U postgres project_db < backups/project_db.sql
+docker compose --env-file "$POSTGRES_ENV_FILE" exec -T postgres psql -v ON_ERROR_STOP=1 -U postgres project_db < "$BACKUP_DIR/project_db.sql"
 ```
 
 For larger production databases, use a scheduled backup job and copy backup files off the VPS.
@@ -150,9 +157,11 @@ For larger production databases, use a scheduled backup job and copy backup file
 
 1. Back up every important database.
 2. Read the PostgreSQL Docker image release notes for the target major version.
-3. Update the image tag in `docker-compose.yml`.
-4. Run `docker compose pull`.
+3. For a patch update within the current major version, keep the existing image tag. For a major upgrade, complete the database-specific migration procedure with a tested backup and a separate target volume; the pull/recreate commands below do not migrate data.
+4. Run `docker compose --env-file "$POSTGRES_ENV_FILE" pull`.
 5. Restart with `docker compose --env-file "$POSTGRES_ENV_FILE" up -d`.
+
+The current PostgreSQL 16 volume mounts at `/var/lib/postgresql/data`. PostgreSQL 18+ changes its volume layout; follow the [official image migration notes](https://hub.docker.com/_/postgres) before switching majors.
 
 Major PostgreSQL upgrades can require a dump/restore or `pg_upgrade`. Do not change major versions casually on a production database.
 

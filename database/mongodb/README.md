@@ -20,8 +20,9 @@ Do not deploy the end-of-life MongoDB 4.4 branch to work around missing AVX; cho
 cd /path/to/vps-setup
 export VPS_SETUP_SECRETS="$HOME/.config/vps-setup"
 export MONGODB_ENV_FILE="$VPS_SETUP_SECRETS/database/mongodb.env"
+umask 077
 mkdir -p "$VPS_SETUP_SECRETS/database"
-cp database/mongodb/.env.example "$MONGODB_ENV_FILE"
+test -e "$MONGODB_ENV_FILE" || cp database/mongodb/.env.example "$MONGODB_ENV_FILE"
 chmod 600 "$MONGODB_ENV_FILE"
 nano "$MONGODB_ENV_FILE"
 
@@ -40,7 +41,7 @@ By default, MongoDB listens on `127.0.0.1:27017` on the VPS. This is safer than 
 Keep `MONGO_BIND_IP=127.0.0.1` and create an SSH tunnel:
 
 ```bash
-ssh -N -L 27017:127.0.0.1:27017 -p SSH_PORT deploy@YOUR_VPS_IP
+ssh -i ~/.ssh/id_ed25519_vps -o ExitOnForwardFailure=yes -N -L 27017:127.0.0.1:27017 -p SSH_PORT deploy@YOUR_VPS_IP
 ```
 
 Connect your local client to `127.0.0.1:27017`. The tunnel avoids a public MongoDB listener. For a separate application server, prefer a private network or VPN.
@@ -129,24 +130,27 @@ docker compose --env-file "$MONGODB_ENV_FILE" down
 Create a backup for one project database:
 
 ```bash
-mkdir -p backups
-docker compose --env-file "$MONGODB_ENV_FILE" exec -T mongodb mongodump \
-  --username mongo_admin \
-  --password 'change-this-mongo-root-password' \
-  --authenticationDatabase admin \
-  --db project_db \
-  --archive > backups/project_db.archive
+umask 077
+export BACKUP_DIR="$HOME/.local/state/vps-setup/backups"
+mkdir -p "$BACKUP_DIR"
+backup_tmp="$(mktemp "$BACKUP_DIR/project_db.archive.XXXXXX")"
+docker compose --env-file "$MONGODB_ENV_FILE" exec -T mongodb sh -c '
+  exec mongodump --username "$MONGO_INITDB_ROOT_USERNAME" \
+    --password "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin \
+    --db project_db --archive
+' > "$backup_tmp" && mv "$backup_tmp" "$BACKUP_DIR/project_db.archive"
 ```
 
-Restore a backup:
+On dump failure, the last successful backup remains unchanged; inspect/remove the temporary file. These commands use the container credentials without putting the literal password in shell history (privileged users can still inspect process arguments).
+
+Restore into an empty target database and recreate its project user separately:
 
 ```bash
-docker compose --env-file "$MONGODB_ENV_FILE" exec -T mongodb mongorestore \
-  --username mongo_admin \
-  --password 'change-this-mongo-root-password' \
-  --authenticationDatabase admin \
-  --archive \
-  --nsInclude 'project_db.*' < backups/project_db.archive
+docker compose --env-file "$MONGODB_ENV_FILE" exec -T mongodb sh -c '
+  exec mongorestore --username "$MONGO_INITDB_ROOT_USERNAME" \
+    --password "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin \
+    --archive --nsInclude "project_db.*" --stopOnError
+' < "$BACKUP_DIR/project_db.archive"
 ```
 
 For larger production databases, use a scheduled backup job and copy backup files off the VPS.
@@ -155,8 +159,8 @@ For larger production databases, use a scheduled backup job and copy backup file
 
 1. Back up every important database.
 2. Read the MongoDB Docker image release notes for the target major version.
-3. Update the image tag in `docker-compose.yml`.
-4. Run `docker compose pull`.
+3. For a patch update within the current major version, keep the existing image tag. For a major upgrade, complete the database-specific migration procedure with a tested backup and a separate target volume; the pull/recreate commands below do not migrate data.
+4. Run `docker compose --env-file "$MONGODB_ENV_FILE" pull`.
 5. Restart with `docker compose --env-file "$MONGODB_ENV_FILE" up -d`.
 
 Major MongoDB upgrades can require stepping through intermediate versions. Do not change major versions casually on a production database.

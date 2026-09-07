@@ -14,8 +14,9 @@ Start PostgreSQL first, then start pgAdmin:
 cd /path/to/vps-setup
 export VPS_SETUP_SECRETS="$HOME/.config/vps-setup"
 export PGADMIN_ENV_FILE="$VPS_SETUP_SECRETS/database/pgadmin.env"
+umask 077
 mkdir -p "$VPS_SETUP_SECRETS/database"
-cp database/pgadmin/.env.example "$PGADMIN_ENV_FILE"
+test -e "$PGADMIN_ENV_FILE" || cp database/pgadmin/.env.example "$PGADMIN_ENV_FILE"
 chmod 600 "$PGADMIN_ENV_FILE"
 nano "$PGADMIN_ENV_FILE"
 
@@ -34,7 +35,7 @@ By default, pgAdmin listens on `127.0.0.1:5050` on the VPS. This avoids exposing
 Use an SSH tunnel:
 
 ```bash
-ssh -L 5050:127.0.0.1:5050 -p SSH_PORT deploy@YOUR_VPS_IP
+ssh -i ~/.ssh/id_ed25519_vps -o ExitOnForwardFailure=yes -N -L 5050:127.0.0.1:5050 -p SSH_PORT deploy@YOUR_VPS_IP
 ```
 
 Then open:
@@ -60,7 +61,7 @@ Connection tab:
 ```text
 Host name/address: postgresql
 Port: 5432
-Maintenance database: postgres
+Maintenance database: project_db
 Username: project_user
 Password: project_user_password
 ```

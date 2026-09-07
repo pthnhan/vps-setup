@@ -78,10 +78,11 @@ The script does not reboot the VPS or close port `22` during this run.
 Keep the original session open. From a new terminal on your computer, use the private key paired with `SSH_PUBLIC_KEY`:
 
 ```bash
-ssh -i ~/.ssh/id_ed25519_vps -p 2222 deploy@YOUR_VPS_IP
+ssh -o IdentitiesOnly=yes -o PreferredAuthentications=publickey -o ControlPath=none \
+  -i ~/.ssh/id_ed25519_vps -p 2222 deploy@YOUR_VPS_IP
 ```
 
-Replace the key path, port, username, and IP with the values you chose. Inside the new session, verify:
+Replace the key path, port, username, and IP with the values you chose. These options require a fresh public-key login, so a password fallback or reused connection cannot hide a broken key. A private-key passphrase prompt is normal. Inside the new session, verify:
 
 ```bash
 sudo -v
@@ -96,10 +97,12 @@ Do not continue if any command fails. Check the original session or provider con
 Run the command printed by the first setup run. When the script is stored at the path used above, it is:
 
 ```bash
-sudo bash /root/setup.sh --finalize
+sudo env SSH_CONNECTION="$SSH_CONNECTION" bash /root/setup.sh --finalize
 ```
 
-The script refuses to finalize unless the current SSH session is connected through `SSH_PORT`. It then:
+`sudo` normally removes `SSH_CONNECTION` from its environment. The `env` argument above passes only that variable from your current shell to the root process. Run it directly from the new administrator login, before entering `sudo -i`, `su`, or a reused tmux/screen session.
+
+The script refuses to finalize if the variable is missing/malformed, its port differs from `SSH_PORT`, or the sudo caller differs from `ADMIN_USER`. This is an accidental-lockout check; a root-capable administrator can override environment variables. It then:
 
 - disables root SSH login;
 - disables password and keyboard-interactive SSH authentication;
@@ -107,7 +110,9 @@ The script refuses to finalize unless the current SSH session is connected throu
 - removes the UFW rule for port `22`;
 - updates Fail2ban to monitor only the new port.
 
-After finalization, open one more terminal and verify the new login again. Then remove port `22` from the provider firewall.
+The script checks the effective SSH configuration (including `Match` rules for the administrator and root from your current client address) and listening ports. It expects authentication methods `any` or `publickey`; custom MFA policies need a separate setup workflow. If applying SSH fails, it restores the configuration from immediately before that attempt and tries to restart SSH. Keep the original session and provider console available even with this recovery.
+
+After finalization, open one more terminal and repeat the public-key login from step 5 and `sudo -v`. Then remove port `22` from the provider firewall.
 
 If Ubuntu reports that a reboot is required, reboot only after finalization and successful login verification:
 
@@ -115,15 +120,51 @@ If Ubuntu reports that a reboot is required, reboot only after finalization and 
 sudo reboot
 ```
 
+Reconnect after reboot and repeat `sudo -v`, `docker version`, and `docker compose version`.
+
 The initial VPS setup is complete. Return to the [repository README](../README.md#after-first-setup) when you are ready to install service modules.
+
+## Troubleshooting And Reruns
+
+**Already hit “Run finalize from an SSH session connected to the new port” with an older script?** The same `sudo env SSH_CONNECTION="$SSH_CONNECTION" bash /root/setup.sh --finalize` command above works with that script too. You do not need to reinstall Ubuntu or rerun initial setup. First repeat step 5 with the public-key-only options.
+
+To confirm the environment issue without changing anything:
+
+```bash
+printf 'Before sudo: %s\n' "$SSH_CONNECTION"
+sudo printenv SSH_CONNECTION
+```
+
+If the first command shows four fields ending in your new port and the second prints nothing, sudo removed the variable. Do not type a fabricated connection value; pass the actual shell variable.
+
+**Other SSH configuration conflicts:** use the still-open session or provider console:
+
+```bash
+sudo sshd -t
+sudo sshd -T
+sudo ss -ltnp
+sudo systemctl status ssh.service ssh.socket --no-pager
+sudo journalctl -u ssh.service -u ssh.socket -n 50 --no-pager
+sudo grep -RnsE '^[[:space:]]*(Include|Port|ListenAddress|Match|AllowUsers|DenyUsers|AllowGroups|DenyGroups|AuthenticationMethods|PermitRootLogin|PasswordAuthentication|KbdInteractiveAuthentication)' /etc/ssh/sshd_config /etc/ssh/sshd_config.d
+```
+
+An additional `Port 22` or an override before the toolkit drop-in can prevent finalization. Review the conflicting provider configuration rather than deleting files blindly. The script leaves the UFW fallback rule in place when SSH validation fails.
+
+**Interrupted setup:** fix the reported error, keep the same edited variables, and rerun `--setup` before finalization. After SSH has been hardened, use `--finalize` to retry remaining checks; the script refuses `--setup` to avoid reopening password/root access and port 22. Do not replace your edited `/root/setup.sh` with a fresh download without preserving its settings.
+
+**Swap:** use `SWAP_SIZE_GB=0` to skip allocation. Existing active swap is left alone. If an interrupted allocation left an unusable `/swapfile`, inspect it before removing or recreating it.
 
 ## What The Script Cannot Configure
 
 The script cannot change the VPS provider's external firewall. You must open the new SSH port before the first run and remove port `22` after finalization.
 
+Membership in the Docker group grants root-level control of the VPS; give it only to trusted administrators.
+
 Docker-published ports can bypass UFW. Keep private databases and administration UIs bound to `127.0.0.1` or accessible only through a Docker network.
 
 ## References
+
+- [Sudo environment handling](https://github.com/sudo-project/sudo/blob/main/docs/TROUBLESHOOTING.md)
 
 - [Ubuntu user management](https://ubuntu.com/server/docs/how-to/security/user-management/)
 - [Ubuntu OpenSSH server](https://ubuntu.com/server/docs/how-to/security/openssh-server/)

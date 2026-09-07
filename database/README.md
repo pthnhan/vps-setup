@@ -48,8 +48,9 @@ Choose a database module and start it:
 ```bash
 cd /path/to/vps-setup
 export VPS_SETUP_SECRETS="$HOME/.config/vps-setup"
+umask 077
 mkdir -p "$VPS_SETUP_SECRETS/database"
-cp database/postgresql/.env.example "$VPS_SETUP_SECRETS/database/postgresql.env"
+test -e "$VPS_SETUP_SECRETS/database/postgresql.env" || cp database/postgresql/.env.example "$VPS_SETUP_SECRETS/database/postgresql.env"
 chmod 600 "$VPS_SETUP_SECRETS/database/postgresql.env"
 nano "$VPS_SETUP_SECRETS/database/postgresql.env"
 
@@ -88,8 +89,9 @@ Example:
 ```bash
 cd /path/to/vps-setup
 export VPS_SETUP_SECRETS="$HOME/.config/vps-setup"
+umask 077
 mkdir -p "$VPS_SETUP_SECRETS/database"
-cp database/dbgate/.env.example "$VPS_SETUP_SECRETS/database/dbgate.env"
+test -e "$VPS_SETUP_SECRETS/database/dbgate.env" || cp database/dbgate/.env.example "$VPS_SETUP_SECRETS/database/dbgate.env"
 chmod 600 "$VPS_SETUP_SECRETS/database/dbgate.env"
 nano "$VPS_SETUP_SECRETS/database/dbgate.env"
 
@@ -155,7 +157,7 @@ Create a database and user for a project:
 ```sql
 CREATE USER project_user WITH PASSWORD 'change_this_project_password';
 CREATE DATABASE project_db OWNER project_user;
-GRANT ALL PRIVILEGES ON DATABASE project_db TO project_user;
+REVOKE ALL ON DATABASE project_db FROM PUBLIC;
 \q
 ```
 
@@ -196,6 +198,16 @@ MONGODB_URI=mongodb://project_user:change_this_project_password@mongodb:27017/pr
 ```
 
 Use `127.0.0.1` for processes running on the VPS host and `mongodb` for apps attached to the shared Docker network.
+
+## Credentials And Updates
+
+The copy commands preserve an existing private env file. Edit it instead of copying the example over it. Generate passwords with `openssl rand -hex 32`; hexadecimal avoids URI and Compose interpolation surprises. Percent-encode reserved characters when putting other passwords into a connection URI; quote literal values containing `$` with single quotes in the env file.
+
+PostgreSQL, MongoDB, and pgAdmin initialization credentials apply when their data volume is empty. Editing an env file later does **not** rotate an existing database/UI password. Change it inside the service first, then update dependent env files and recreate containers. `docker compose restart` does not apply changed environment settings; use `docker compose --env-file "$SERVICE_ENV_FILE" up -d`.
+
+Database ownership grants the project user its privileges. The PostgreSQL examples revoke the default `PUBLIC` database access so other project roles cannot connect by default. PostgreSQL still shares cluster-level metadata, and containers on `database_network` can reach each other; this is not isolation for mutually untrusted tenants. See [PostgreSQL privileges](https://www.postgresql.org/docs/16/ddl-priv.html).
+
+Choose the configured admin username if you changed `postgres` or `mongo_admin`. In SSH tunnel examples, replace the dedicated key path, port, username, and IP; if the local port is busy, change the number before the first colon and connect your client to that number.
 
 ## Security Notes
 

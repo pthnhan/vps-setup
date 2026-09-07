@@ -6,13 +6,13 @@ services:
     environment:
       LOGIN: ${DBGATE_LOGIN:?set DBGATE_LOGIN in .env}
       PASSWORD: ${DBGATE_PASSWORD:?set DBGATE_PASSWORD in .env}
-      BASIC_AUTH: ${DBGATE_BASIC_AUTH:-false}
-      CONNECTIONS: ${DBGATE_CONNECTIONS:-crypto_postgres,crypto_mongo}
-      LABEL_crypto_postgres: ${DBGATE_POSTGRES_LABEL:-Crypto PostgreSQL}
-      URL_crypto_postgres: ${DBGATE_POSTGRES_URL:?set DBGATE_POSTGRES_URL in .env}
+      BASIC_AUTH: ${DBGATE_BASIC_AUTH:-1}
+      CONNECTIONS: ${DBGATE_CONNECTIONS:-}
+      LABEL_crypto_postgres: ${DBGATE_POSTGRES_LABEL:-PostgreSQL}
+      URL_crypto_postgres: ${DBGATE_POSTGRES_URL:-}
       ENGINE_crypto_postgres: postgres@dbgate-plugin-postgres
-      LABEL_crypto_mongo: ${DBGATE_MONGO_LABEL:-Crypto MongoDB}
-      URL_crypto_mongo: ${DBGATE_MONGO_URL:?set DBGATE_MONGO_URL in .env}
+      LABEL_crypto_mongo: ${DBGATE_MONGO_LABEL:-MongoDB}
+      URL_crypto_mongo: ${DBGATE_MONGO_URL:-}
       ENGINE_crypto_mongo: mongo@dbgate-plugin-mongo
       TZ: ${TZ:-UTC}
     ports:

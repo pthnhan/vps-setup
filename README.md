@@ -50,3 +50,19 @@ cd "$HOME/vps-setup"
 ```
 
 Then continue with the service module you need.
+
+## Local Checks
+
+```bash
+bash 1st-setup/test-setup.sh
+```
+
+The checks use temporary files and replace privileged operations; they do not configure your computer. When `sshd` is installed, they also validate generated configurations and conflicting `Match` rules with the real OpenSSH parser. They do not replace an end-to-end test on a disposable Ubuntu VPS.
+
+With Docker Compose installed, validate all module templates without starting containers:
+
+```bash
+for module in database/*/; do
+  docker compose -f "$module/docker-compose.yml" --env-file "$module/.env.example" config --quiet || break
+done
+```

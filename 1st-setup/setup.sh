@@ -10,7 +10,6 @@ SWAP_SIZE_GB="2"
 
 SCRIPT_PATH="$(readlink -f "$0")"
 SSH_CONFIG="/etc/ssh/sshd_config.d/00-vps-setup.conf"
-SSH_CONFIG_BACKUP="${SSH_CONFIG}.before-vps-setup"
 FAIL2BAN_CONFIG="/etc/fail2ban/jail.d/sshd.local"
 
 log() {
@@ -30,9 +29,10 @@ validate() {
   . /etc/os-release
   [[ ${ID:-} == "ubuntu" ]] || die "This script supports Ubuntu only."
   [[ $ADMIN_USER =~ ^[a-z_][a-z0-9_-]*$ ]] || die "ADMIN_USER is invalid."
-  [[ $SSH_PORT =~ ^[0-9]+$ ]] || die "SSH_PORT must be a number."
+  [[ $ADMIN_USER != root && $(id -u "$ADMIN_USER" 2>/dev/null || true) != 0 ]] || die "ADMIN_USER must not be root (UID 0)."
+  [[ $SSH_PORT =~ ^[0-9]{1,5}$ ]] || die "SSH_PORT must contain 1 to 5 digits."
   (( 10#$SSH_PORT >= 1024 && 10#$SSH_PORT <= 65535 )) || die "SSH_PORT must be between 1024 and 65535."
-  [[ $SSH_PORT != "22" ]] || die "SSH_PORT must differ from port 22."
+  SSH_PORT=$((10#$SSH_PORT))
   [[ $SSH_PUBLIC_KEY != "PASTE_YOUR_PUBLIC_KEY_HERE" ]] || die "Set SSH_PUBLIC_KEY before running."
   [[ $SSH_PUBLIC_KEY != *$'\n'* ]] || die "SSH_PUBLIC_KEY must contain exactly one line."
   [[ $SWAP_SIZE_GB =~ ^[0-9]+$ ]] || die "SWAP_SIZE_GB must be a non-negative integer."
@@ -71,18 +71,19 @@ create_admin_user() {
     passwd "$ADMIN_USER"
   fi
 
-  local ssh_dir authorized_keys
-  ssh_dir="/home/$ADMIN_USER/.ssh"
+  local ssh_dir authorized_keys admin_group
+  ssh_dir="$(getent passwd "$ADMIN_USER" | cut -d: -f6)/.ssh"
+  admin_group="$(id -gn "$ADMIN_USER")"
   authorized_keys="$ssh_dir/authorized_keys"
-  install -d -m 700 -o "$ADMIN_USER" -g "$ADMIN_USER" "$ssh_dir"
+  install -d -m 700 -o "$ADMIN_USER" -g "$admin_group" "$ssh_dir"
   touch "$authorized_keys"
-  grep -qxF "$SSH_PUBLIC_KEY" "$authorized_keys" || printf '%s\n' "$SSH_PUBLIC_KEY" >> "$authorized_keys"
-  chown "$ADMIN_USER:$ADMIN_USER" "$authorized_keys"
+  grep -qxF "$SSH_PUBLIC_KEY" "$authorized_keys" || printf '\n%s\n' "$SSH_PUBLIC_KEY" >> "$authorized_keys"
+  chown "$ADMIN_USER:$admin_group" "$authorized_keys"
   chmod 600 "$authorized_keys"
 }
 
 write_ssh_config() {
-  local phase="$1" config_file
+  local phase="$1" config_file backup_file had_config=false
   config_file="$(mktemp)"
 
   if [[ $phase == "setup" ]]; then
@@ -106,26 +107,62 @@ EOF
   fi
 
   install -d -m 755 /etc/ssh/sshd_config.d
-  if [[ -f $SSH_CONFIG && ! -f $SSH_CONFIG_BACKUP ]]; then
-    cp -a "$SSH_CONFIG" "$SSH_CONFIG_BACKUP"
+  backup_file="$(mktemp)"
+  if [[ -f $SSH_CONFIG ]]; then
+    cp -a "$SSH_CONFIG" "$backup_file"
+    had_config=true
   fi
   install -m 600 -o root -g root "$config_file" "$SSH_CONFIG"
   rm -f "$config_file"
 
-  if ! sshd -t; then
-    if [[ -f $SSH_CONFIG_BACKUP ]]; then
-      cp -a "$SSH_CONFIG_BACKUP" "$SSH_CONFIG"
-    else
-      rm -f "$SSH_CONFIG"
-    fi
-    die "SSH configuration is invalid; the previous file was restored."
+  if sshd -t && check_ssh_config "$phase" && restart_ssh &&
+      port_is_listening "$SSH_PORT" &&
+      { if [[ $phase == setup ]]; then port_is_listening 22;
+        else ! port_is_listening 22; fi; }; then
+    rm -f "$backup_file"
+    return
   fi
+
+  if [[ $had_config == true ]]; then
+    cp -a "$backup_file" "$SSH_CONFIG"
+  else
+    rm -f "$SSH_CONFIG"
+  fi
+  rm -f "$backup_file"
+  restart_ssh || die "SSH recovery failed. Keep this session open and use the provider console; inspect journalctl -u ssh.service -u ssh.socket."
+  die "SSH change failed; previous configuration restored. Check sshd -T and other files in /etc/ssh before retrying."
+}
+
+check_ssh_config() {
+  local phase="$1" effective expected context_user client_ip client_port server_ip connected_port
+  effective="$(sshd -T)" || return 1
+  grep -qxF "port $SSH_PORT" <<< "$effective" || return 1
+  grep -qxF 'pubkeyauthentication yes' <<< "$effective" || return 1
+  if [[ $phase == setup ]]; then
+    grep -qxF 'port 22' <<< "$effective"
+    return
+  fi
+
+  # Ports and AllowUsers are additive; Match blocks can override authentication.
+  [[ $(awk '$1 == "port" {print $2}' <<< "$effective" | sort -u) == "$SSH_PORT" ]] || return 1
+  read -r client_ip client_port server_ip connected_port <<< "$SSH_CONNECTION"
+  for context_user in "$ADMIN_USER" root; do
+    effective="$(sshd -T -C "user=$context_user,host=$client_ip,addr=$client_ip,laddr=$server_ip,lport=$SSH_PORT")" || return 1
+    [[ $(awk '$1 == "allowusers" {for (i=2; i<=NF; i++) print $i}' <<< "$effective" | sort -u) == "$ADMIN_USER" ]] || return 1
+    for expected in 'permitrootlogin no' 'passwordauthentication no' \
+        'kbdinteractiveauthentication no' 'pubkeyauthentication yes'; do
+      grep -qxF "$expected" <<< "$effective" || return 1
+    done
+    if [[ $context_user == "$ADMIN_USER" ]]; then
+      grep -qxE 'authenticationmethods (any|publickey)' <<< "$effective" || return 1
+    fi
+  done
 }
 
 restart_ssh() {
-  systemctl daemon-reload
+  systemctl daemon-reload || return 1
   if systemctl is-active --quiet ssh.socket; then
-    systemctl restart ssh.socket
+    systemctl restart ssh.socket || return 1
   fi
   systemctl restart ssh.service
 }
@@ -201,15 +238,15 @@ EOF
 
 setup() {
   validate
+  if [[ -f $SSH_CONFIG ]] && grep -qiE '^[[:space:]]*PermitRootLogin[[:space:]]+no([[:space:]]|$)' "$SSH_CONFIG"; then
+    die "SSH is already hardened. Do not rerun setup; use --finalize to retry final checks."
+  fi
   install_packages
   create_admin_user
   configure_firewall
 
   log "Configuring SSH on ports 22 and $SSH_PORT"
   write_ssh_config setup
-  restart_ssh
-  port_is_listening 22 || die "Port 22 is not listening; use the provider console to recover."
-  port_is_listening "$SSH_PORT" || die "Port $SSH_PORT is not listening; port 22 remains available."
   configure_fail2ban "22,$SSH_PORT"
   configure_system
   install_docker
@@ -219,7 +256,7 @@ setup() {
     "1. Ensure TCP $SSH_PORT is open in the VPS provider firewall." \
     "2. Keep this session open." \
     "3. From a new terminal, log in as $ADMIN_USER on port $SSH_PORT with the private key matching SSH_PUBLIC_KEY." \
-    "4. Verify sudo and Docker, then run: sudo bash $SCRIPT_PATH --finalize" \
+    "4. Verify sudo and Docker, then run: sudo env SSH_CONNECTION=\"\$SSH_CONNECTION\" bash \"$SCRIPT_PATH\" --finalize" \
     "Port 22 remains open until finalize succeeds."
 
   if [[ -f /var/run/reboot-required ]]; then
@@ -230,21 +267,18 @@ setup() {
 finalize() {
   validate
   id "$ADMIN_USER" >/dev/null 2>&1 || die "ADMIN_USER does not exist; run setup first."
-  grep -qxF "$SSH_PUBLIC_KEY" "/home/$ADMIN_USER/.ssh/authorized_keys" || die "The configured public key is not installed for ADMIN_USER."
-  [[ -n ${SSH_CONNECTION:-} ]] || die "Run finalize from an SSH session connected to the new port."
-
-  local connected_port
-  connected_port="${SSH_CONNECTION##* }"
-  [[ $connected_port == "$SSH_PORT" ]] || die "Reconnect on port $SSH_PORT before finalizing."
+  local authorized_keys client_ip client_port server_ip connected_port extra
+  authorized_keys="$(getent passwd "$ADMIN_USER" | cut -d: -f6)/.ssh/authorized_keys"
+  grep -qxF "$SSH_PUBLIC_KEY" "$authorized_keys" || die "The configured public key is not installed for ADMIN_USER."
+  [[ -n ${SSH_CONNECTION:-} ]] || die 'SSH_CONNECTION is missing (sudo usually removes it). From the new SSH session run: sudo env SSH_CONNECTION="$SSH_CONNECTION" bash /root/setup.sh --finalize (adjust the script path if needed).'
+  read -r client_ip client_port server_ip connected_port extra <<< "$SSH_CONNECTION"
+  [[ -n $client_ip && -n $server_ip && $client_port =~ ^[0-9]+$ && $connected_port =~ ^[0-9]+$ && -z $extra && $SSH_CONNECTION != *$'\n'* ]] || die "SSH_CONNECTION is malformed; reconnect directly by SSH."
+  [[ $connected_port == "$SSH_PORT" ]] || die "Reconnect on port $SSH_PORT before finalizing (current port: $connected_port)."
+  [[ ${SUDO_USER:-} == "$ADMIN_USER" ]] || die "Log in directly as $ADMIN_USER and run finalize with sudo."
 
   log "Disabling root/password SSH login and removing port 22"
   write_ssh_config finalize
-  restart_ssh
-  port_is_listening "$SSH_PORT" || die "Port $SSH_PORT stopped listening; use the current session or provider console to recover."
-  if port_is_listening 22; then
-    die "Port 22 is still listening; check other SSH configuration files before closing it."
-  fi
-  ufw --force delete allow 22/tcp || true
+  ufw --force delete allow 22/tcp
   configure_fail2ban "$SSH_PORT"
 
   log "First setup complete"

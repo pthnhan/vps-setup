@@ -14,8 +14,9 @@ Start PostgreSQL and/or MongoDB first, then start DbGate:
 cd /path/to/vps-setup
 export VPS_SETUP_SECRETS="$HOME/.config/vps-setup"
 export DBGATE_ENV_FILE="$VPS_SETUP_SECRETS/database/dbgate.env"
+umask 077
 mkdir -p "$VPS_SETUP_SECRETS/database"
-cp database/dbgate/.env.example "$DBGATE_ENV_FILE"
+test -e "$DBGATE_ENV_FILE" || cp database/dbgate/.env.example "$DBGATE_ENV_FILE"
 chmod 600 "$DBGATE_ENV_FILE"
 nano "$DBGATE_ENV_FILE"
 
@@ -29,21 +30,22 @@ Change `DBGATE_PASSWORD` in the private env file before starting the service.
 
 By default, DbGate listens on `127.0.0.1:3000` on the VPS. This avoids exposing a database administration UI directly to the public internet.
 
-This module can preconfigure project database connections with:
+By default, add connections in the UI using the sections below. Neither database URL is required to start DbGate. To preconfigure connections instead, set the selected IDs and corresponding URLs (the `crypto_*` IDs are retained for existing env files):
 
 ```dotenv
+DBGATE_CONNECTIONS=crypto_postgres,crypto_mongo
 DBGATE_POSTGRES_URL=postgresql://project_user:project_user_password@postgresql:5432/project_db
 DBGATE_MONGO_URL=mongodb://project_user:project_user_password@mongodb:27017/project_db?authSource=project_db
 ```
 
-Use the Docker network aliases `postgresql` and `mongodb` because DbGate runs on the shared `database_network`.
+Select only `crypto_postgres` or `crypto_mongo` when you use one database. Leave `DBGATE_CONNECTIONS` empty to manage connections in the UI. Use the Docker network aliases `postgresql` and `mongodb` because DbGate runs on the shared `database_network`.
 
 ## Open From Your Local Machine
 
 Use an SSH tunnel:
 
 ```bash
-ssh -L 3000:127.0.0.1:3000 -p SSH_PORT deploy@YOUR_VPS_IP
+ssh -i ~/.ssh/id_ed25519_vps -o ExitOnForwardFailure=yes -N -L 3000:127.0.0.1:3000 -p SSH_PORT deploy@YOUR_VPS_IP
 ```
 
 Then open:
